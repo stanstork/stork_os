@@ -2,7 +2,7 @@
 BUILD_DIR := build
 KERNEL_DIR := kernel
 BOOT_DIR := boot
-RUST_TARGET := x86_64-kernel/debug/kernel
+RUST_TARGET := i686-kernel/debug/kernel
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 KERNEL_ENTRY_OBJ := $(BUILD_DIR)/kernel_entry.o
 BOOTSECT_BIN := $(BUILD_DIR)/bootsect.bin
