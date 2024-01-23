@@ -24,7 +24,7 @@ call print_bios
 mov bx, 0x0002
 
 ; Now we want to load {n} sectors for the bootloader and kernel
-mov cx, 0x0004
+mov cx, 4
 
 ; Finally, we want to store the new sector immediately after the first
 ; loaded sector, at adress 0x7E00. This will help a lot with jumping between

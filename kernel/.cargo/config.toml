@@ -4,3 +4,7 @@ build-std-features = ["compiler-builtins-mem"]
 
 [build]
 target = "x86_64_kernel.json"
+
+[target.'cfg(all(target_arch = "x86_64", target_os = "none"))']
+linker = "rust-lld"
+rustflags = ["-C", "linker=ld.lld"]
