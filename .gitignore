@@ -1,3 +1,5 @@
 /kernel/target
-/build
 /.vscode
+
+build/*
+!build/.gitkeep
