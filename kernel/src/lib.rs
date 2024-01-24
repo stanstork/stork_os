@@ -2,7 +2,7 @@
 #![no_main] // disable all Rust-level entry points
 
 use core::panic::PanicInfo;
-use drivers::vga::Color;
+use drivers::vga::{Color, ColorCode};
 
 mod drivers;
 mod hardware;
@@ -12,16 +12,11 @@ pub extern "C" fn _start() -> ! {
     let mut vga = drivers::vga::VgaWriter::new();
 
     vga.clear_screen();
-    vga.set_cursor_pos(0, 0);
+    vga.cursor.set_position(0, 24);
 
-    let message = "Hello World! ";
-    vga.write(message, Color::Blk, Color::Cyn);
-
-    let message = "This is a test of the VGA driver. It should print two lines. ";
-    vga.write(message, Color::Blk, Color::Cyn);
-
-    let message = "This is a second line.";
-    vga.write(message, Color::Blk, Color::Cyn);
+    vga.write("Hello, world!\n", ColorCode::new(Color::Blk, Color::Cyn));
+    vga.write("New line\n", ColorCode::new(Color::Blk, Color::Cyn));
+    vga.write("New line 2", ColorCode::new(Color::Blk, Color::Cyn));
 
     loop {}
 }

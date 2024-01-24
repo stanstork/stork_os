@@ -1,15 +1,26 @@
 use crate::hardware::port_io::{byte_in, byte_out};
 
 // Constants for VGA memory and settings
-const VGA_START: *mut VgaChar = 0xB8000 as *mut VgaChar; // Start address of VGA text mode memory
-const VGA_EXTENT: usize = 80 * 25; // Total number of characters in VGA text mode (80 columns x 25 rows)
-const VGA_WIDTH: usize = 80; // Width of the VGA text mode screen in characters
+const VGA_START: *mut VgaChar = 0xB8000 as *mut VgaChar;
+const VGA_WIDTH: usize = 80;
+const VGA_HEIGHT: usize = 25;
+const VGA_SIZE: usize = VGA_WIDTH * VGA_HEIGHT;
 
 // Ports for controlling the VGA cursor
 const CURSOR_PORT_COMMAND: u16 = 0x3D4;
 const CURSOR_PORT_DATA: u16 = 0x3D5;
 
-// Enum representing the different color codes for VGA text mode
+const VGA_BUFFER: *mut VgaChar = VGA_START as *mut VgaChar;
+
+// Representation of a VGA character
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct VgaChar {
+    ascii_char: u8,
+    color_code: ColorCode,
+}
+
+// Color codes for VGA text mode
 #[derive(Copy, Clone)]
 pub enum Color {
     Blk = 0,  // Black
@@ -30,64 +41,134 @@ pub enum Color {
     Wht = 15, // White
 }
 
-// Representation of a character in VGA text mode
-#[repr(C)]
+// Wrapper for color code (foreground and background)
 #[derive(Copy, Clone)]
-struct VgaChar {
-    ascii_char: u8,
-    color_code: u8,
+#[repr(transparent)]
+pub struct ColorCode(u8);
+
+impl ColorCode {
+    pub fn new(foreground: Color, background: Color) -> Self {
+        ColorCode((background as u8) << 4 | (foreground as u8))
+    }
 }
 
-pub struct VgaWriter {}
+pub struct VgaWriter {
+    pub cursor: VgaCursor,
+}
+
+pub struct VgaCursor {}
 
 impl VgaWriter {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            cursor: VgaCursor::new(),
+        }
     }
 
     /// Clears the VGA text mode screen by writing spaces to every character cell
     pub fn clear_screen(&self) {
-        let clear_color = self.get_color_code(Color::Blk, Color::Cyn);
         let clear_char = VgaChar {
             ascii_char: b' ',
-            color_code: clear_color,
+            color_code: ColorCode::new(Color::Blk, Color::Cyn),
         };
 
         unsafe {
-            for i in 0..VGA_EXTENT {
-                *VGA_START.add(i) = clear_char;
+            for i in 0..VGA_SIZE {
+                VGA_BUFFER.add(i).write_volatile(clear_char);
             }
         }
     }
 
     /// Writes a single byte to the VGA text mode screen at the current cursor position.
-    /// `byte` is the ASCII character to write.
-    /// `fg_color` is the foreground color of the character.
-    /// `bg_color` is the background color of the character.
-    pub fn write_byte(&mut self, byte: u8, fg_color: Color, bg_color: Color) {
-        let color_code = self.get_color_code(fg_color, bg_color);
-        let printed = VgaChar {
-            ascii_char: byte,
-            color_code,
-        };
-
-        let position = self.get_cursor_pos();
-        unsafe {
-            *VGA_START.add(position as usize) = printed;
+    pub fn write_byte(&mut self, byte: u8, color_code: ColorCode) {
+        match byte {
+            b'\n' => self.write_new_line(),
+            b'\r' => self.write_carriage_return(),
+            b'\t' => self.write_tab(color_code),
+            _ => self.write_char(byte, color_code),
         }
     }
 
     /// Writes a string to the VGA text mode screen at the current cursor position.
-    /// Parameters:
-    ///  - `string`: is the string to write.
-    ///  - `fg_color`: is the foreground color of the string.
-    ///  - `bg_color`: is the background color of the string.
     /// The cursor is advanced after the string is written.
-    pub fn write(&mut self, string: &str, fg_color: Color, bg_color: Color) {
+    pub fn write(&mut self, string: &str, color_code: ColorCode) {
         for byte in string.bytes() {
-            self.write_byte(byte, fg_color, bg_color);
-            self.advance_cursor();
+            self.write_byte(byte, color_code);
         }
+    }
+
+    fn write_new_line(&mut self) {
+        let position = self.cursor.get_position();
+        let row = position as usize / VGA_WIDTH;
+
+        if row + 1 >= VGA_HEIGHT {
+            self.scroll();
+        } else {
+            self.cursor.set_position(0, row + 1);
+        }
+    }
+
+    fn write_carriage_return(&mut self) {
+        let position = self.cursor.get_position();
+        let row = position / VGA_WIDTH as u16;
+        self.cursor.set_position(0, row as usize);
+    }
+
+    fn write_tab(&mut self, color_code: ColorCode) {
+        for _ in 0..4 {
+            self.write_byte(b' ', color_code);
+        }
+        self.cursor.advance();
+    }
+
+    fn write_char(&mut self, byte: u8, color_code: ColorCode) {
+        let position = self.cursor.get_position();
+        let vga_char = VgaChar {
+            ascii_char: byte,
+            color_code,
+        };
+
+        unsafe {
+            VGA_START.add(position as usize).write_volatile(vga_char);
+        }
+        self.cursor.advance();
+    }
+
+    fn scroll(&mut self) {
+        // Move all lines up by one
+        for row in 1..VGA_HEIGHT {
+            for col in 0..VGA_WIDTH {
+                let to = col + (row - 1) * VGA_WIDTH;
+                let from = col + row * VGA_WIDTH;
+
+                unsafe {
+                    let vga_char = VGA_BUFFER.add(from).read_volatile();
+                    VGA_BUFFER.add(to).write_volatile(vga_char);
+                }
+            }
+        }
+
+        // Clear the last line
+        let row = VGA_HEIGHT - 1;
+        for col in 0..VGA_WIDTH {
+            let to = col + row * VGA_WIDTH;
+            let vga_char = VgaChar {
+                ascii_char: b' ',
+                color_code: ColorCode::new(Color::Blk, Color::Cyn),
+            };
+
+            unsafe {
+                VGA_BUFFER.add(to).write_volatile(vga_char);
+            }
+        }
+
+        self.cursor.set_position(0, row);
+    }
+}
+
+impl VgaCursor {
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -126,11 +207,11 @@ impl VgaWriter {
     /// The function calculates the linear position index from these coordinates,
     /// clamps it to ensure it's within screen bounds, and then writes the position
     /// to the VGA cursor position ports.
-    pub fn set_cursor_pos(&self, x: u8, y: u8) {
-        let mut pos = x as u16 + (VGA_WIDTH as u16 * y as u16);
+    pub fn set_position(&self, x: usize, y: usize) {
+        let mut pos = x + (VGA_WIDTH * y);
 
-        if pos >= VGA_EXTENT as u16 {
-            pos = VGA_EXTENT as u16 - 1;
+        if pos >= VGA_SIZE {
+            pos = VGA_SIZE - 1;
         }
 
         byte_out(CURSOR_PORT_COMMAND, 0x0F);
@@ -139,40 +220,28 @@ impl VgaWriter {
         byte_out(CURSOR_PORT_DATA, ((pos >> 8) & 0xFF) as u8);
     }
 
-    /// Gets the color code for a character in VGA text mode.
-    /// Parameters:
-    /// - `fg_color`: The foreground color of the character.
-    /// - `bg_color`: The background color of the character.
-    ///
-    /// The color code is a single byte with the following format:
-    /// - The first 4 bits are the background color.
-    /// - The last 4 bits are the foreground color.
-    fn get_color_code(&self, fg_color: Color, bg_color: Color) -> u8 {
-        ((bg_color as u8) << 4) | ((fg_color as u8) & 0x0F)
-    }
-
     /// Retrieves the current cursor position from the VGA hardware.
     /// Returns:
     /// - A 16-bit unsigned integer representing the cursor's position.
     /// This function reads from two VGA ports (CURSOR_PORT_COMMAND and CURSOR_PORT_DATA)
     /// to get the high and low bytes of the cursor's current position in the VGA buffer.
     /// These bytes are combined to form the complete position value.
-    fn get_cursor_pos(&self) -> u16 {
-        let mut position = 0;
+    pub fn get_position(&self) -> u16 {
+        let mut position: u16 = 0;
 
         byte_out(CURSOR_PORT_COMMAND, 0x0F);
-        position |= byte_in(CURSOR_PORT_DATA);
+        position |= byte_in(CURSOR_PORT_DATA) as u16;
 
         byte_out(CURSOR_PORT_COMMAND, 0x0E);
-        position |= ((byte_in(CURSOR_PORT_DATA) as u16) << 8) as u8;
+        position |= (byte_in(CURSOR_PORT_DATA) as u16) << 8;
 
-        position as u16
+        position
     }
 
     /// Shows the text cursor on the screen.
     /// This function writes to the VGA cursor control registers to enable the cursor's visibility.
     /// It uses the CURSOR_PORT_COMMAND and CURSOR_PORT_DATA ports to manipulate cursor display settings.
-    fn show_cursor(&self) {
+    fn show(&self) {
         byte_out(CURSOR_PORT_COMMAND, 0x0A);
         let mut current = byte_in(CURSOR_PORT_DATA);
         byte_out(CURSOR_PORT_DATA, current & 0xC0);
@@ -185,7 +254,7 @@ impl VgaWriter {
     /// Hides the text cursor from the screen.
     /// This function writes to the VGA cursor control registers to disable the cursor's visibility.
     /// It specifically sets the cursor's start line to a value that makes it invisible on the screen.
-    fn hide_cursor(&self) {
+    fn hide(&self) {
         byte_out(CURSOR_PORT_COMMAND, 0x0A);
         byte_out(CURSOR_PORT_DATA, 0x20);
     }
@@ -194,12 +263,12 @@ impl VgaWriter {
     /// The function calculates the new cursor position by incrementing the current position.
     /// If the new position exceeds the bounds of the VGA screen, it's clamped to the maximum value.
     /// The updated position is then written to the VGA cursor position ports.
-    fn advance_cursor(&self) {
-        let mut pos = self.get_cursor_pos();
+    pub fn advance(&self) {
+        let mut pos = self.get_position();
         pos += 1;
 
-        if pos >= VGA_EXTENT as u16 {
-            pos = VGA_EXTENT as u16 - 1;
+        if pos >= VGA_SIZE as u16 {
+            pos = VGA_SIZE as u16 - 1;
         }
 
         byte_out(CURSOR_PORT_COMMAND, 0x0F);
