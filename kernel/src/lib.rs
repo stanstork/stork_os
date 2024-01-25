@@ -12,11 +12,13 @@ pub extern "C" fn _start() -> ! {
     let mut vga = drivers::vga::VgaWriter::new();
 
     vga.clear_screen();
-    vga.cursor.set_position(0, 24);
+    vga.move_cursor(0, 24);
 
-    vga.write("Hello, world!\n", ColorCode::new(Color::Blk, Color::Cyn));
-    vga.write("New line\n", ColorCode::new(Color::Blk, Color::Cyn));
-    vga.write("New line 2", ColorCode::new(Color::Blk, Color::Cyn));
+    let color_code = ColorCode::new(Color::Wht, Color::Dgy);
+
+    vga.write("Hello, world!\n", color_code);
+    vga.write("New line\n", color_code);
+    vga.write("New line 2", color_code);
 
     loop {}
 }

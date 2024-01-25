@@ -53,7 +53,8 @@ impl ColorCode {
 }
 
 pub struct VgaWriter {
-    pub cursor: VgaCursor,
+    pub cursor_x: usize,
+    pub cursor_y: usize,
 }
 
 pub struct VgaCursor {}
@@ -61,15 +62,17 @@ pub struct VgaCursor {}
 impl VgaWriter {
     pub fn new() -> Self {
         Self {
-            cursor: VgaCursor::new(),
+            cursor_x: 0,
+            cursor_y: 0,
         }
     }
 
     /// Clears the VGA text mode screen by writing spaces to every character cell
-    pub fn clear_screen(&self) {
+    pub fn clear_screen(&mut self) {
+        let color_code = ColorCode::new(Color::Blk, Color::Dgy);
         let clear_char = VgaChar {
             ascii_char: b' ',
-            color_code: ColorCode::new(Color::Blk, Color::Cyn),
+            color_code,
         };
 
         unsafe {
@@ -77,70 +80,63 @@ impl VgaWriter {
                 VGA_BUFFER.add(i).write_volatile(clear_char);
             }
         }
+
+        self.move_cursor(0, 0);
     }
 
     /// Writes a single byte to the VGA text mode screen at the current cursor position.
     pub fn write_byte(&mut self, byte: u8, color_code: ColorCode) {
         match byte {
-            b'\n' => self.write_new_line(),
-            b'\r' => self.write_carriage_return(),
-            b'\t' => self.write_tab(color_code),
+            b'\n' => {
+                self.cursor_x = 0;
+                self.cursor_y += 1;
+            }
+            b'\r' => {
+                self.cursor_x = 0;
+            }
+            b'\t' => {
+                self.cursor_x += 4;
+            }
             _ => self.write_char(byte, color_code),
         }
+
+        self.scroll();
+        self.move_cursor(self.cursor_x, self.cursor_y);
     }
 
     /// Writes a string to the VGA text mode screen at the current cursor position.
-    /// The cursor is advanced after the string is written.
     pub fn write(&mut self, string: &str, color_code: ColorCode) {
         for byte in string.bytes() {
             self.write_byte(byte, color_code);
         }
     }
 
-    fn write_new_line(&mut self) {
-        let position = self.cursor.get_position();
-        let row = position as usize / VGA_WIDTH;
-
-        if row + 1 >= VGA_HEIGHT {
-            self.scroll();
-        } else {
-            self.cursor.set_position(0, row + 1);
-        }
-    }
-
-    fn write_carriage_return(&mut self) {
-        let position = self.cursor.get_position();
-        let row = position / VGA_WIDTH as u16;
-        self.cursor.set_position(0, row as usize);
-    }
-
-    fn write_tab(&mut self, color_code: ColorCode) {
-        for _ in 0..4 {
-            self.write_byte(b' ', color_code);
-        }
-        self.cursor.advance();
-    }
-
+    /// Writes a single character to the VGA text mode screen at the current cursor position.
     fn write_char(&mut self, byte: u8, color_code: ColorCode) {
-        let position = self.cursor.get_position();
-        let vga_char = VgaChar {
-            ascii_char: byte,
-            color_code,
-        };
+        let position = self.cursor_y * VGA_WIDTH + self.cursor_x; // Calculate the linear position index from the coordinates
 
         unsafe {
-            VGA_START.add(position as usize).write_volatile(vga_char);
+            VGA_START.add(position as usize).write_volatile(VgaChar {
+                ascii_char: byte,
+                color_code,
+            });
         }
-        self.cursor.advance();
+
+        self.cursor_x += 1; // Advance the cursor by one character
     }
 
+    /// Scrolls the screen up by one line.
+    /// This function moves all lines up by one, and clears the last line.
     fn scroll(&mut self) {
-        // Move all lines up by one
-        for row in 1..VGA_HEIGHT {
-            for col in 0..VGA_WIDTH {
-                let to = col + (row - 1) * VGA_WIDTH;
-                let from = col + row * VGA_WIDTH;
+        if self.cursor_y < VGA_HEIGHT {
+            return;
+        }
 
+        // Move all lines up by one
+        for x in 1..VGA_HEIGHT {
+            for y in 0..VGA_WIDTH {
+                let to = y + (x - 1) * VGA_WIDTH;
+                let from = y + x * VGA_WIDTH;
                 unsafe {
                     let vga_char = VGA_BUFFER.add(from).read_volatile();
                     VGA_BUFFER.add(to).write_volatile(vga_char);
@@ -149,20 +145,33 @@ impl VgaWriter {
         }
 
         // Clear the last line
-        let row = VGA_HEIGHT - 1;
-        for col in 0..VGA_WIDTH {
-            let to = col + row * VGA_WIDTH;
-            let vga_char = VgaChar {
-                ascii_char: b' ',
-                color_code: ColorCode::new(Color::Blk, Color::Cyn),
-            };
+        let y = VGA_HEIGHT - 1;
+        let color_code = ColorCode::new(Color::Blk, Color::Dgy);
 
+        for x in 0..VGA_WIDTH {
+            let pos = x + y * VGA_WIDTH;
             unsafe {
-                VGA_BUFFER.add(to).write_volatile(vga_char);
+                VGA_BUFFER.add(pos).write_volatile(VgaChar {
+                    ascii_char: b' ',
+                    color_code,
+                });
             }
         }
 
-        self.cursor.set_position(0, row);
+        self.move_cursor(0, y);
+    }
+
+    /// Moves the cursor to the specified position on the screen.
+    pub fn move_cursor(&mut self, x: usize, y: usize) {
+        self.cursor_x = x;
+        self.cursor_y = y;
+
+        let position = (x + (VGA_WIDTH * y)) as u16; // Calculate the linear position index from the coordinates
+
+        byte_out(CURSOR_PORT_COMMAND, 0x0F); // Set the Cursor Location Low Register
+        byte_out(CURSOR_PORT_DATA, (position & 0xFF) as u8); // Write the lower 8 bits of the cursor position
+        byte_out(CURSOR_PORT_COMMAND, 0x0E); // Set the Cursor Location High Register
+        byte_out(CURSOR_PORT_DATA, ((position >> 8) & 0xFF) as u8); // Write the higher 8 bits of the cursor position
     }
 }
 
