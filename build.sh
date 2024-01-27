@@ -20,4 +20,5 @@ then
 else
     result=`expr $boot_result + $make_result`
     echo "Build failed with error code $result. See output for more info."
+    (make clean)
 fi

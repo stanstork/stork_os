@@ -111,6 +111,28 @@ impl VgaWriter {
         }
     }
 
+    /// Writes a number to the VGA text mode screen at the current cursor position.
+    pub fn write_num(&mut self, num: u32, color_code: ColorCode) {
+        if num == 0 {
+            self.write_byte(b'0', color_code);
+            return;
+        }
+
+        let mut buffer = [0u8; 10]; // 10 bytes is enough to store a 32-bit number
+        let mut index = buffer.len();
+        let mut num = num;
+
+        while num > 0 {
+            index -= 1;
+            buffer[index] = b'0' + (num % 10) as u8;
+            num /= 10;
+        }
+
+        for &digit in &buffer[index..] {
+            self.write_byte(digit, color_code);
+        }
+    }
+
     /// Writes a single character to the VGA text mode screen at the current cursor position.
     fn write_char(&mut self, byte: u8, color_code: ColorCode) {
         let position = self.cursor_y * VGA_WIDTH + self.cursor_x; // Calculate the linear position index from the coordinates
