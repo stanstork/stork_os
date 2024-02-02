@@ -1,5 +1,9 @@
 use core::arch::asm;
 
+// Ports for controlling the VGA cursor
+pub const CURSOR_PORT_COMMAND: u16 = 0x3D4;
+pub const CURSOR_PORT_DATA: u16 = 0x3D5;
+
 /// Reads a byte from a specified hardware port.
 pub fn byte_in(port: u16) -> u8 {
     let result: u8;

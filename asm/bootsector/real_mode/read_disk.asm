@@ -71,5 +71,5 @@ bios_disk_error:
     ; Infinite loop to hang
     jmp $
 
-error_msg:              db `\r\nERROR Loading Sectors. Code: `, 0
-success_msg:            db `\r\nAdditional Sectors Loaded Successfully!\r\n`, 0
+error_msg:              db `ERROR Loading Sectors. Code: `, 0
+success_msg:            db `nAdditional Sectors Loaded Successfully!`, 0
