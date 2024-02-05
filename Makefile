@@ -17,11 +17,15 @@ os: kernel
 # Build the Rust kernel and move the output to the build directory
 kernel: kernel_entry
 	cd $(KERNEL_DIR) && cargo build --release && cd ..
-	ld.lld -o $(BUILD_DIR)/$(KERNEL_BIN) -Ttext 0x8200 $(BUILD_DIR)/kernel_entry.o $(KERNEL_DIR)/$(RUST_TARGET) --oformat binary
+	ld.lld -o $(BUILD_DIR)/$(KERNEL_BIN) -Ttext 0x8200 $(BUILD_DIR)/kernel_entry.o $(BUILD_DIR)/gdt_flush.o $(KERNEL_DIR)/$(RUST_TARGET) --oformat binary
 
 # Compile the kernel entry point
-kernel_entry: boot
+kernel_entry: boot gdt
 	nasm -f elf64 $(ASM_DIR)/kernel_entry.asm -o $(BUILD_DIR)/kernel_entry.o
+
+# Compile the GDT flush function
+gdt:
+	nasm -f elf64 $(ASM_DIR)/gdt_flush.asm -o $(BUILD_DIR)/gdt_flush.o
 
 # Compile the boot sector
 boot:

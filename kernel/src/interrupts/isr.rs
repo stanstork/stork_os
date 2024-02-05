@@ -1,74 +1,147 @@
-use super::idt::InterruptDescriptorTable;
-use crate::println;
-use core::fmt;
+use super::{idt::InterruptDescriptorTable, timer::init_timer};
+use crate::{
+    cpu::io::{Port, PortIO},
+    println,
+};
+
+// Constants for kernel code segment and IDT entry count.
+pub const KERNEL_CS: u16 = 0x08;
+pub const IDT_ENTRIES: usize = 256;
+
+// Ports for PIC command and data registers.
+pub const PIC1_DATA: Port = Port::new(0x21);
+pub const PIC2_DATA: Port = Port::new(0xA1);
+pub const PIC1_COMMAND: Port = Port::new(0x20);
+pub const PIC2_COMMAND: Port = Port::new(0xA0);
+
+// Initialization command words for PIC.
+pub const ICW1_INIT: u8 = 0x10;
+pub const ICW1_ICW4: u8 = 0x01;
+pub const ICW4_8086: u8 = 0x01;
 
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub struct InterruptStackFrameValue {
-    pub instruction_pointer: u64,
-    pub code_segment: u64,
-    pub cpu_flags: u64,
-    pub stack_pointer: u64,
-    pub stack_segment: u64,
-}
-
-/// Wrapper struct for the InterruptStackFrameValue struct
-#[repr(C)]
+#[repr(C, packed)]
 pub struct InterruptStackFrame {
     value: InterruptStackFrameValue,
 }
 
-// Custom Debug implementation for the InterruptStackFrame struct
-impl fmt::Debug for InterruptStackFrame {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Helper struct to format the CPU flags as a hexadecimal value
-        struct Hex(u64);
-        impl fmt::Debug for Hex {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "0x{:x}", self.0)
-            }
+/// Structure representing the stack frame values.
+#[derive(Clone, Copy)]
+#[repr(C, packed)]
+pub struct InterruptStackFrameValue {
+    instruction_pointer: u64,
+    code_segment: u64,
+    cpu_flags: u64,
+    stack_pointer: u64,
+    stack_segment: u64,
+}
+
+/// The Interrupt Descriptor Table (IDT).
+pub static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
+
+/// Initialize the Interrupt Descriptor Table (IDT) and the Programmable Interrupt Controller (PIC).
+pub fn isr_install() {
+    println!("Initializing IDT and PIC");
+
+    unsafe {
+        // Set specific interrupt handlers.
+        IDT.page_fault
+            .set_gate(page_fault_handler as u64, 0x8E, KERNEL_CS);
+        IDT.double_fault
+            .set_gate(double_fault_handler as u64, 0x8E, KERNEL_CS);
+        IDT.general_protection_fault
+            .set_gate(gpf_fault_handler as u64, 0x8E, KERNEL_CS);
+        IDT.breakpoint
+            .set_gate(breakpoint_handler as u64, 0x8E, KERNEL_CS);
+
+        // Set all other entries to the default handler
+        for i in 32..IDT_ENTRIES {
+            IDT[i].set_gate(default_handler as u64, 0x8E, KERNEL_CS);
         }
 
-        // Format the InterruptStackFrame struct
-        f.debug_struct("InterruptStackFrame")
-            .field("instruction_pointer", &self.value.instruction_pointer)
-            .field("code_segment", &self.value.code_segment)
-            .field("cpu_flags", &Hex(self.value.cpu_flags))
-            .field("stack_pointer", &self.value.stack_pointer)
-            .field("stack_segment", &self.value.stack_segment)
-            .finish()
+        // Load the IDT
+        IDT.load();
+        println!("IDT loaded successfully");
+
+        // Remap the PIC
+        remap_pic();
+        println!("PIC remapped successfully");
+
+        // Initialize the timer
+        init_timer(50);
+        println!("Timer initialized with frequency: 50 Hz");
     }
 }
 
-/// Installs the Interrupt Service Routines (ISRs) for the CPU
-pub fn isr_install() {
-    let mut idt = InterruptDescriptorTable::new();
+/// Remaps the PIC to avoid conflicts with CPU exceptions.
+pub fn remap_pic() {
+    // Save current masks.
+    let pic1 = PIC1_DATA.read_port();
+    let pic2 = PIC2_DATA.read_port();
 
-    idt.breakpoint.set_handler(breakpoint_handler as u64);
-    idt.non_maskable_interrupt
-        .set_handler(non_maskable_handler as u64);
+    // Initialize PICs in cascade mode.
+    PIC1_COMMAND.write_port(ICW1_INIT | ICW1_ICW4);
+    io_wait();
+    PIC2_COMMAND.write_port(ICW1_INIT | ICW1_ICW4);
+    io_wait();
 
-    // Set the generic handler for all other interrupts
-    for i in 32..256 {
-        idt[i].set_handler(isr_handler as u64);
-    }
+    // Set vector offsets.
+    PIC1_DATA.write_port(0x20); // ICW2: Master PIC vector offset
+    io_wait();
+    PIC2_DATA.write_port(0x28); // ICW2: Slave PIC vector offset
+    io_wait();
 
-    // Load the IDT to start using the interrupt handlers
-    idt.load();
+    // Configure PIC cascading.
+    PIC1_DATA.write_port(4); // ICW3: tell Master PIC that there is a slave PIC at IRQ2 (0000 0100)
+    io_wait();
+    PIC2_DATA.write_port(2); // ICW3: tell Slave PIC its cascade identity (0000 0010)
+    io_wait();
+
+    // Set PICs to 8086 mode.
+    PIC1_DATA.write_port(ICW4_8086);
+    io_wait();
+    PIC2_DATA.write_port(ICW4_8086);
+    io_wait();
+
+    // Restore saved masks.
+    PIC1_DATA.write_port(pic1);
+    PIC2_DATA.write_port(pic2);
 }
 
-/// Generic handler for all interrupts
-pub extern "x86-interrupt" fn isr_handler(stack_frame: InterruptStackFrame) {
-    println!("Interrupt: Generic handler");
+/// Waits for I/O operations to complete.
+pub fn io_wait() {
+    Port::new(0x80).write_port(0);
 }
 
-/// Handler for the breakpoint interrupt
+// Various interrupt handlers follow:
+
+/// Handler for breakpoint exceptions.
 pub extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    println!("Interrupt: Breakpoint\n {:#?}", stack_frame);
+    println!("Interrupt: Breakpoint");
 }
 
-/// Handler for the non-maskable interrupt
-pub extern "x86-interrupt" fn non_maskable_handler(stack_frame: InterruptStackFrame) {
-    println!("Interrupt: Non Maskable\n {:#?}", stack_frame);
+/// Handler for page fault exceptions.
+pub extern "x86-interrupt" fn page_fault_handler(stack_frame: InterruptStackFrame) {
+    println!("Interrupt: Page Fault");
+    loop {}
+}
+
+/// Handler for double fault exceptions.
+pub extern "x86-interrupt" fn double_fault_handler(
+    stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) -> ! {
+    println!("Interrupt: Double Fault");
+    loop {}
+}
+
+/// Handler for general protection fault exceptions.
+pub extern "x86-interrupt" fn gpf_fault_handler(stack_frame: InterruptStackFrame) {
+    println!("Interrupt: General Protection fault");
+    loop {}
+}
+
+/// Default handler for all other interrupts.
+pub extern "x86-interrupt" fn default_handler(stack_frame: InterruptStackFrame) {
+    println!("Interrupt: Default handler");
 }

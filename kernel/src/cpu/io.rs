@@ -1,11 +1,7 @@
 use core::arch::asm;
 
-// Ports for controlling the VGA cursor
-pub const CURSOR_PORT_COMMAND: u16 = 0x3D4;
-pub const CURSOR_PORT_DATA: u16 = 0x3D5;
-
 /// Reads a byte from a specified hardware port.
-pub fn byte_in(port: u16) -> u8 {
+pub fn inb(port: u16) -> u8 {
     let result: u8;
 
     unsafe {
@@ -16,7 +12,7 @@ pub fn byte_in(port: u16) -> u8 {
             // "dx" is a register where the port number must be placed before executing this instruction.
             "in al, dx",
 
-            // The `out("al") result` tells Rust to put the value from the "al" register into the `result` variable after executing the instruction.
+            // The `out("al") result` tells Rust to pbyte_outut the value from the "al" register into the `result` variable after executing the instruction.
             out("al") result,
 
             // The `in("dx") port` tells Rust to use the value of `port` as the input for the "dx" register.
@@ -36,7 +32,7 @@ pub fn byte_in(port: u16) -> u8 {
 
 /// Writes a byte to a specified hardware port.
 /// This is used for sending data directly to hardware devices.
-pub fn byte_out(port: u16, data: u8) {
+pub fn outb(port: u16, data: u8) {
     // As with `byte_in`, we are dealing with low-level hardware access, so we use an unsafe block.
     unsafe {
         asm!(
@@ -52,8 +48,52 @@ pub fn byte_out(port: u16, data: u8) {
             // The `in("al") data` operand tells Rust to load the byte of data into the "al" register.
             in("al") data,
 
-            // The same options as in `byte_in` are used here.
-            options(nomem, nostack, preserves_flags)
+            options(nostack)
         );
+    }
+}
+
+/// Trait defining basic I/O port operations.
+pub trait PortIO {
+    /// Reads a byte from the port.
+    fn read_port(&self) -> u8;
+
+    /// Writes a byte to the port.
+    fn write_port(&self, data: u8);
+}
+
+/// Represents a hardware I/O port.
+pub struct Port {
+    port: u16,
+}
+
+impl Port {
+    /// Creates a new Port instance with the specified port number.
+    pub const fn new(port: u16) -> Port {
+        Port { port }
+    }
+}
+
+impl PortIO for Port {
+    /// Reads a byte from the port.
+    fn read_port(&self) -> u8 {
+        inb(self.port)
+    }
+
+    /// Writes a byte to the port.
+    fn write_port(&self, data: u8) {
+        outb(self.port, data)
+    }
+}
+
+impl PortIO for u16 {
+    /// Reads a byte from a specified hardware port.
+    fn read_port(&self) -> u8 {
+        inb(*self)
+    }
+
+    /// Writes a byte to a specified hardware port.
+    fn write_port(&self, data: u8) {
+        outb(*self, data)
     }
 }

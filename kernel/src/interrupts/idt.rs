@@ -1,76 +1,50 @@
+use crate::structures::DescriptorTablePointer;
 use core::{
     arch::asm,
-    fmt,
     mem::size_of,
     ops::{Index, IndexMut},
 };
 
-const KERNEL_CS: u16 = 0x08; // kernel code segment selector
-const INT_ATTR: u8 = 0x8E; // interrupt gate, present
-
 /// An entry in the Interrupt Descriptor Table (IDT).
-#[repr(C)]
 #[derive(Clone, Copy)]
+#[repr(C, packed)]
 pub struct IdtEntry {
-    base_low: u16,  // lower 16 bits of the offset to the interrupt handler
-    selector: u16,  // segment selector in GDT or LDT
-    zero: u8,       // unused, set to 0
-    flags: u8,      // flags, determine what type of interrupt this is
-    base_mid: u16,  // next 16 bits of the offset to the interrupt handler
-    base_high: u32, // upper 16 bits of the offset to the interrupt handler
-    reserved: u32,  // reserved, set to 0
-}
-
-impl fmt::Debug for IdtEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IdtEntry")
-            .field("handler_addr", &self.handler_address())
-            .field("selector", &self.selector)
-            .field("flags", &self.flags)
-            .finish()
-    }
+    offset0: u16,   // offset bits 0..15
+    selector: u16,  // a code segment selector in GDT or LDT
+    ist: u8,        // bits 0..2 hold Interrupt Stack Table offset, rest of bits zero.
+    types_attr: u8, // type and attributes
+    offset1: u16,   // offset bits 16..31
+    offset2: u32,   // offset bits 32..63
+    ignore: u32,    // reserved
 }
 
 impl IdtEntry {
     /// Create a new IDT entry with default values.
-    pub const fn default() -> Self {
-        Self {
-            base_low: 0,
+    pub const fn default() -> IdtEntry {
+        IdtEntry {
+            offset0: 0,
             selector: 0,
-            zero: 0,
-            flags: 0,
-            base_mid: 0,
-            base_high: 0,
-            reserved: 0,
+            ist: 0,
+            types_attr: 0,
+            offset1: 0,
+            offset2: 0,
+            ignore: 0,
         }
     }
 
-    /// Set the handler address for this IDT entry.
-    pub fn set_handler(&mut self, handler_address: u64) {
-        self.base_low = (handler_address & 0xFFFF) as u16;
-        self.base_mid = ((handler_address >> 16) & 0xFFFF) as u16;
-        self.base_high = ((handler_address >> 32) & 0xFFFFFFFF) as u32;
-
-        self.selector = KERNEL_CS;
-        self.zero = 0;
-        self.flags = INT_ATTR;
-        self.reserved = 0;
+    /// Set the offset of the IDT entry.
+    pub fn set_offset(&mut self, offset: u64) {
+        self.offset0 = (offset & 0x000000000000FFFF) as u16;
+        self.offset1 = ((offset & 0x00000000FFFF0000) >> 16) as u16;
+        self.offset2 = ((offset & 0xFFFFFFFF00000000) >> 32) as u32;
     }
 
-    /// Return the full handler address composed of the low, mid, and high parts.
-    pub fn handler_address(&self) -> u64 {
-        let low = self.base_low as u64;
-        let mid = (self.base_mid as u64) << 16;
-        let high = (self.base_high as u64) << 32;
-        low | mid | high
+    /// Set the gate of the IDT entry.
+    pub fn set_gate(&mut self, handler: u64, types_attr: u8, selector: u16) {
+        self.set_offset(handler);
+        self.selector = selector;
+        self.types_attr = types_attr;
     }
-}
-
-/// A pointer to the Interrupt Descriptor Table (IDT).
-#[repr(C, packed)]
-pub struct IdtPtr {
-    limit: u16, // upper 16 bits of all selector limits
-    base: u64,  // address of the first IdtEntry struct
 }
 
 /// The Interrupt Descriptor Table (IDT).
@@ -126,8 +100,8 @@ pub struct InterruptDescriptorTable {
 
 impl InterruptDescriptorTable {
     /// Create a new IDT with default values.
-    pub fn new() -> Self {
-        Self {
+    pub const fn new() -> InterruptDescriptorTable {
+        InterruptDescriptorTable {
             div_by_zero: IdtEntry::default(),
             debug: IdtEntry::default(),
             non_maskable_interrupt: IdtEntry::default(),
@@ -154,8 +128,8 @@ impl InterruptDescriptorTable {
     }
 
     /// Returns a pointer to the IDT for use with the `lidt` instruction.
-    pub fn get_pointer(&self) -> IdtPtr {
-        IdtPtr {
+    pub fn get_pointer(&self) -> DescriptorTablePointer {
+        DescriptorTablePointer {
             limit: size_of::<Self>() as u16 - 1,
             base: self as *const _ as u64,
         }

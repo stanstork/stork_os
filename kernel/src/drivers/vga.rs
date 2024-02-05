@@ -1,6 +1,9 @@
+use crate::cpu::io::{Port, PortIO};
 use core::fmt::Write;
 
-use super::cpu::{byte_out, CURSOR_PORT_COMMAND, CURSOR_PORT_DATA};
+// Ports for controlling the VGA cursor
+pub const CURSOR_PORT_COMMAND: Port = Port::new(0x3D4); // VGA cursor command port
+pub const CURSOR_PORT_DATA: Port = Port::new(0x3D5); // VGA cursor data port
 
 // Constants for VGA memory and settings
 const VGA_START: *mut VgaChar = 0xB8000 as *mut VgaChar; // VGA text mode memory starts at 0xB8000
@@ -119,7 +122,8 @@ impl VgaBufferWriter {
     /// Scrolls the screen up by one line.
     /// This function moves all lines up by one, and clears the last line.
     fn scroll(&mut self) {
-        if self.cursor_y < VGA_HEIGHT {
+        let position = self.cursor_y * VGA_WIDTH + self.cursor_x;
+        if self.cursor_y < VGA_HEIGHT && position < VGA_SIZE {
             return;
         }
 
@@ -159,10 +163,10 @@ impl VgaBufferWriter {
 
         let position = (x + (VGA_WIDTH * y)) as u16; // Calculate the linear position index from the coordinates
 
-        byte_out(CURSOR_PORT_COMMAND, 0x0F); // Set the Cursor Location Low Register
-        byte_out(CURSOR_PORT_DATA, (position & 0xFF) as u8); // Write the lower 8 bits of the cursor position
-        byte_out(CURSOR_PORT_COMMAND, 0x0E); // Set the Cursor Location High Register
-        byte_out(CURSOR_PORT_DATA, ((position >> 8) & 0xFF) as u8); // Write the higher 8 bits of the cursor position
+        CURSOR_PORT_COMMAND.write_port(0x0F); // Set the Cursor Location Low Register
+        CURSOR_PORT_DATA.write_port((position & 0xFF) as u8); // Write the lower 8 bits of the cursor position
+        CURSOR_PORT_COMMAND.write_port(0x0E); // Set the Cursor Location High Register
+        CURSOR_PORT_DATA.write_port(((position >> 8) & 0xFF) as u8); // Write the higher 8 bits of the cursor position
     }
 }
 
