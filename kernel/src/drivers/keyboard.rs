@@ -4,20 +4,24 @@ use crate::{
     print, println,
 };
 
-// Keyboard controller ports.
-const KYBRD_CTRL_STATS_REG: Port = Port::new(0x64);
+// Ports and Commands for Keyboard Encoder and Controller
+const KYBRD_ENC_CMD_SET_LED: u8 = 0xED; // Command to set the keyboard LEDs (Num Lock, Caps Lock, Scroll Lock)
+const KYBRD_ENC_CMD_REG: Port = Port::new(0x60); // Port for sending commands to the keyboard encoder
 
-const KYBRD_ENC_CMD_SET_LED: u8 = 0xED;
-const KYBRD_ENC_CMD_REG: Port = Port::new(0x60);
+const KYBRD_CTRL_STATS_REG: Port = Port::new(0x64); // Port for accessing the keyboard controller's status register
 
-const KYBRD_CTRL_STATS_MASK_OUT_BUF: u8 = 1;
-const KYBRD_CTRL_STATS_MASK_IN_BUF: u8 = 2;
+// Masks for Keyboard Controller Status Register
+const KYBRD_CTRL_STATS_MASK_OUT_BUF: u8 = 1; // Mask for checking the output buffer status (1 = full, data can be read)
+const KYBRD_CTRL_STATS_MASK_IN_BUF: u8 = 2; // Mask for checking the input buffer status (1 = full, data can't be written)
 
-const KEYBOARD_INTERRUPT_VECTOR: u8 = 0x21;
-const KEYBOARD_DATA_PORT: Port = Port::new(0x60);
+// Keyboard Interrupt and Data
+const KEYBOARD_INTERRUPT_VECTOR: u8 = 0x21; // The interrupt vector (IRQ) number used by the keyboard
+const KEYBOARD_DATA_PORT: Port = Port::new(0x60); // Port for receiving data from the keyboard
 
-const MAX_KEYB_BUFFER_SIZE: usize = 255;
+// Keyboard Buffer
+const MAX_KEYB_BUFFER_SIZE: usize = 255; // Maximum size of the keyboard buffer
 
+/// Represents the key codes for keyboard keys.
 pub enum KeyCode {
     KeyReserved = 0,
     KeyEsc = 1,
@@ -106,8 +110,9 @@ pub enum KeyCode {
 }
 
 impl KeyCode {
-    pub fn from_index(index: u8) -> KeyCode {
-        match index {
+    /// Converts a scan code to a key code.
+    pub fn from_index(code: u8) -> KeyCode {
+        match code {
             0 => KeyCode::KeyReserved,
             1 => KeyCode::KeyEsc,
             2 => KeyCode::Key1,
@@ -196,6 +201,8 @@ impl KeyCode {
         }
     }
 
+    /// Converts a key code to an ASCII character.
+    /// Returns '\0' if the key code does not correspond to an ASCII character.
     pub fn to_ascii(&self) -> char {
         match self {
             KeyCode::Key1 => '1',
@@ -267,6 +274,8 @@ impl KeyCode {
     }
 }
 
+/// Represents a key event.
+/// It contains the scan code of the key and the state of the modifier keys (Shift, Caps Lock, Ctrl, Alt).
 #[derive(Clone, Copy)]
 pub struct KeyEvent {
     scan_code: u8,
@@ -277,6 +286,7 @@ pub struct KeyEvent {
 }
 
 impl KeyEvent {
+    /// Creates a new KeyEvent struct with a scan code of 0 and all modifier keys set to false.
     pub const fn new() -> KeyEvent {
         KeyEvent {
             scan_code: 0,
@@ -287,6 +297,8 @@ impl KeyEvent {
         }
     }
 
+    /// Converts the scan code to an ASCII character.
+    /// Returns '\0' if the scan code does not correspond to an ASCII character.
     pub fn to_ascii(&self) -> char {
         let code = KeyCode::from_index(self.scan_code).to_ascii() as u8;
 
@@ -298,8 +310,8 @@ impl KeyEvent {
 
             match code {
                 b'a'..=b'z' => {
+                    // Convert to uppercase if Shift is pressed or Caps Lock is active
                     if self.shift || self.caps_lock {
-                        // Convert to uppercase if Shift is pressed or Caps Lock is active, but not both
                         (code - 32) as char
                     } else {
                         code as char
@@ -344,25 +356,25 @@ impl KeyEvent {
     }
 }
 
+/// Represents the state of the keyboard.
 pub enum State {
     Normal,
     Prefix,
 }
 
-/// The Keyboard struct represents a keyboard.
-/// It contains a buffer for the keys that are pressed.
+/// Represents a keyboard with its state and buffer.
 pub struct Keyboard {
-    buffer: [KeyEvent; MAX_KEYB_BUFFER_SIZE],
-    buffer_index: usize,
-    current_state: State,
-    shift: bool,
-    caps_lock: bool,
-    ctrl: bool,
-    alt: bool,
+    buffer: [KeyEvent; MAX_KEYB_BUFFER_SIZE], // Buffer to store key events
+    buffer_index: usize,                      // Current position in the buffer
+    current_state: State,                     // Current state of the keyboard
+    shift: bool,                              // Shift key state
+    caps_lock: bool,                          // Caps Lock key state
+    ctrl: bool,                               // Control key state
+    alt: bool,                                // Alt key state
 }
 
 impl Keyboard {
-    /// Creates a new Keyboard struct with an empty buffer.
+    /// Creates a new Keyboard instance.
     pub const fn new() -> Keyboard {
         Keyboard {
             buffer: [KeyEvent::new(); MAX_KEYB_BUFFER_SIZE],
@@ -375,7 +387,8 @@ impl Keyboard {
         }
     }
 
-    /// Pushes a scan code to the keyboard buffer.
+    /// Pushes a KeyEvent into the buffer and updates the buffer index.
+    /// This method also handles wrapping around the buffer when it's full.
     pub fn push(&mut self, scan_code: u8) {
         self.buffer[self.buffer_index] = KeyEvent {
             scan_code,
@@ -385,59 +398,72 @@ impl Keyboard {
             alt: self.alt,
         };
 
-        // Debugging: print the ASCII character of the scan code.
+        // Optionally, print the ASCII character for debugging.
         print!("{}", self.buffer[self.buffer_index].to_ascii());
 
+        // Update buffer index, wrapping around if necessary.
         self.buffer_index = (self.buffer_index + 1) % MAX_KEYB_BUFFER_SIZE;
     }
 
+    /// Reads the current status from the keyboard controller.
     pub fn read_status(&self) -> u8 {
         KYBRD_CTRL_STATS_REG.read_port()
     }
 
+    /// Reads a scan code from the keyboard data port.
     pub fn read(&mut self) -> u8 {
         KEYBOARD_DATA_PORT.read_port()
     }
 
+    /// Sets the LEDs for Num Lock, Caps Lock, and Scroll Lock.
     pub fn set_leds(&self, num: bool, caps: bool, scroll: bool) {
         let mut data = 0;
-
-        data = if scroll { data | 1 } else { data & 1 };
-        data = if num { data | 2 } else { data & 2 };
-        data = if caps { data | 4 } else { data & 4 };
+        data = data | if scroll { 1 } else { 0 };
+        data = data | if num { 2 } else { 0 };
+        data = data | if caps { 4 } else { 0 };
 
         self.send_command(KYBRD_ENC_CMD_SET_LED);
         self.send_command(data);
     }
 
+    /// Sends a command to the keyboard encoder.
     fn send_command(&self, cmd: u8) {
+        // Wait until the input buffer is clear.
         while (self.read_status() & KYBRD_CTRL_STATS_MASK_IN_BUF) != 0 {}
         KYBRD_ENC_CMD_REG.write_port(cmd);
     }
 }
 
-/// The global keyboard instance.
-/// It is used to store the state of the keyboard.
+// Global keyboard instance
 pub static mut KEYBOARD: Keyboard = Keyboard::new();
 
+/// Initializes the keyboard.
 pub fn init_keyboard() {
-    // Initialize the keyboard.
     println!("Initializing keyboard");
     unsafe {
+        // Set the keyboard interrupt handler in the IDT
         IDT[KEYBOARD_INTERRUPT_VECTOR as usize].set_gate(
             keyboard_irq_handler as u64,
-            0x8E,
+            0x8E, // Present, Ring 0, 32-bit interrupt gate
             KERNEL_CS,
         );
     }
 }
 
+/// Interrupt handler for keyboard IRQs.
+///
+/// This function is called by the CPU when a keyboard interrupt occurs.
+/// It reads the scan code from the keyboard, updates the state of the keyboard,
+/// and adds the key event to the keyboard's buffer.
 unsafe extern "x86-interrupt" fn keyboard_irq_handler() {
     let kybrd_status = KEYBOARD.read_status();
+
+    // Check if the keyboard's output buffer is full
     if (kybrd_status & KYBRD_CTRL_STATS_MASK_OUT_BUF) != 0 {
         let mut scan_code = KEYBOARD.read();
         pic_end_master(); // Send EOI signal to the PIC.
 
+        // Check for prefix scan codes (used for special keys)
         if scan_code == 0xE0 || scan_code == 0xE1 {
             KEYBOARD.current_state = State::Prefix;
             return;
@@ -448,6 +474,7 @@ unsafe extern "x86-interrupt" fn keyboard_irq_handler() {
             scan_code &= 0x7F; // Clear the highest bit to get the actual scan code.
         }
 
+        // Update the state of modifier keys
         let key = KeyCode::from_index(scan_code);
         match key {
             KeyCode::KeyLeftCtrl => {
@@ -461,21 +488,18 @@ unsafe extern "x86-interrupt" fn keyboard_irq_handler() {
             }
             KeyCode::KeyCapsLock if !key_released => {
                 KEYBOARD.caps_lock = !KEYBOARD.caps_lock;
-                KEYBOARD.set_leds(
-                    false,
-                    KEYBOARD.buffer[KEYBOARD.buffer_index].caps_lock,
-                    false,
-                );
+                KEYBOARD.set_leds(false, KEYBOARD.caps_lock, false);
             }
             _ => {}
         }
 
+        // Add key event to buffer if the key is pressed
         if !key_released {
             KEYBOARD.push(scan_code);
         }
 
         KEYBOARD.current_state = State::Normal;
     } else {
-        pic_end_master();
+        pic_end_master(); // Send EOI even if no key was pressed
     }
 }
