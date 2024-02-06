@@ -1,23 +1,16 @@
 use super::{idt::InterruptDescriptorTable, timer::init_timer};
 use crate::{
-    cpu::io::{Port, PortIO},
+    cpu::io::{
+        io_wait, PortIO, ICW1_ICW4, ICW1_INIT, ICW4_8086, PIC1_COMMAND, PIC1_DATA, PIC2_COMMAND,
+        PIC2_DATA,
+    },
+    drivers::keyboard::init_keyboard,
     println,
 };
 
 // Constants for kernel code segment and IDT entry count.
 pub const KERNEL_CS: u16 = 0x08;
 pub const IDT_ENTRIES: usize = 256;
-
-// Ports for PIC command and data registers.
-pub const PIC1_DATA: Port = Port::new(0x21);
-pub const PIC2_DATA: Port = Port::new(0xA1);
-pub const PIC1_COMMAND: Port = Port::new(0x20);
-pub const PIC2_COMMAND: Port = Port::new(0xA0);
-
-// Initialization command words for PIC.
-pub const ICW1_INIT: u8 = 0x10;
-pub const ICW1_ICW4: u8 = 0x01;
-pub const ICW4_8086: u8 = 0x01;
 
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
 #[repr(C, packed)]
@@ -70,6 +63,9 @@ pub fn isr_install() {
         // Initialize the timer
         init_timer(50);
         println!("Timer initialized with frequency: 50 Hz");
+
+        // Initialize the keyboard
+        init_keyboard();
     }
 }
 
@@ -106,11 +102,6 @@ pub fn remap_pic() {
     // Restore saved masks.
     PIC1_DATA.write_port(pic1);
     PIC2_DATA.write_port(pic2);
-}
-
-/// Waits for I/O operations to complete.
-pub fn io_wait() {
-    Port::new(0x80).write_port(0);
 }
 
 // Various interrupt handlers follow:

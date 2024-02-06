@@ -1,6 +1,5 @@
 use super::isr::{InterruptStackFrame, IDT, KERNEL_CS};
-use crate::cpu::io::outb;
-use crate::print;
+use crate::cpu::io::{outb, pic_end_master};
 
 /// Represents a system timer.
 pub struct Timer {
@@ -21,9 +20,10 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
         TIMER.tick += 1;
     }
     // Print a dot for each timer tick (for debugging).
-    print!(".");
+    //print!(".");
+
     // Send EOI signal to the PIC.
-    outb(0x20, 0x20);
+    pic_end_master();
 }
 
 /// Initializes the system timer to a given frequency.

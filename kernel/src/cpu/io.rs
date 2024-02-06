@@ -1,5 +1,16 @@
 use core::arch::asm;
 
+// Ports for PIC command and data registers.
+pub const PIC1_DATA: Port = Port::new(0x21);
+pub const PIC2_DATA: Port = Port::new(0xA1);
+pub const PIC1_COMMAND: Port = Port::new(0x20);
+pub const PIC2_COMMAND: Port = Port::new(0xA0);
+
+// Initialization command words for PIC.
+pub const ICW1_INIT: u8 = 0x10;
+pub const ICW1_ICW4: u8 = 0x01;
+pub const ICW4_8086: u8 = 0x01;
+
 /// Reads a byte from a specified hardware port.
 pub fn inb(port: u16) -> u8 {
     let result: u8;
@@ -51,6 +62,20 @@ pub fn outb(port: u16, data: u8) {
             options(nostack)
         );
     }
+}
+
+/// Waits for I/O operations to complete.
+pub fn io_wait() {
+    Port::new(0x80).write_port(0);
+}
+
+pub fn pic_end_master() {
+    PIC1_COMMAND.write_port(0x20);
+}
+
+pub fn pic_end_slave() {
+    PIC2_COMMAND.write_port(0x20);
+    PIC1_COMMAND.write_port(0x20);
 }
 
 /// Trait defining basic I/O port operations.
