@@ -1,39 +1,58 @@
-# Directories and files
-BUILD_DIR := build
-KERNEL_DIR := kernel
-ASM_DIR := asm
-RUST_TARGET := target/x86_64_kernel/release/libkernel.a
-KERNEL_BIN := kernel.bin
-BOOT_BIN := boot.bin
-OS_IMAGE := os-image.bin
+BUILD_DIR         := build
+KERNEL_DIR        := kernel
+BOOTLOADER_DIR	  := boot/uefi
 
-# Default target
-all: os 
+KERNEL_BINARY     := ${BUILD_DIR}/kernel.elf
+BOOTLOADER_BINARY := ${BUILD_DIR}/bootx64.efi
 
-# Create OS image by concatenating boot sector and kernel binaries
-os: kernel
-	cd $(BUILD_DIR) && cat $(BOOT_BIN) $(KERNEL_BIN) > $(OS_IMAGE)
+DISK_IMG          := ${BUILD_DIR}/kernel.img
+DISK_IMG_SIZE     := 2880
 
-# Build the Rust kernel and move the output to the build directory
-kernel: kernel_entry
-	cd $(KERNEL_DIR) && cargo build --release && cd ..
-	ld.lld -o $(BUILD_DIR)/$(KERNEL_BIN) -Ttext 0x8200 $(BUILD_DIR)/kernel_entry.o $(BUILD_DIR)/gdt_flush.o $(KERNEL_DIR)/$(RUST_TARGET) --oformat binary
+QEMU_FLAGS :=                                                \
+	-bios ovmf                                            \
+	-drive if=none,id=uas-disk1,file=${DISK_IMG},format=raw    \
+	-device usb-storage,drive=uas-disk1                        \
+	-serial stdio                                              \
+	-usb                                                       \
+	-net none                                                  \
+	-vga std
 
-# Compile the kernel entry point
-kernel_entry: boot gdt
-	nasm -f elf64 $(ASM_DIR)/kernel_entry.asm -o $(BUILD_DIR)/kernel_entry.o
+.PHONY: all clean emu
 
-# Compile the GDT flush function
-gdt:
-	nasm -f elf64 $(ASM_DIR)/gdt_flush.asm -o $(BUILD_DIR)/gdt_flush.o
+all: ${DISK_IMG}
 
-# Compile the boot sector
-boot:
-	cd $(ASM_DIR)/bootsector && nasm -f bin boot.asm -o ../../$(BUILD_DIR)/boot.bin
+bootloader: ${BOOTLOADER_BINARY}
 
-# Clean up build files
+debug: ${DISK_IMG}
+	qemu-system-x86_64    \
+		${QEMU_FLAGS}       \
+		-S                  \
+		-gdb tcp::1234
+
+emu: ${DISK_IMG}
+	qemu-system-x86_64    \
+		${QEMU_FLAGS}
+
+kernel: ${KERNEL_BINARY}
+
+${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} 
+	# Create UEFI boot disk image in DOS format.
+	dd if=/dev/zero of=${DISK_IMG} bs=512 count=93750
+	mformat -i ${DISK_IMG} ::
+	mmd -i ${DISK_IMG} ::/EFI
+	mmd -i ${DISK_IMG} ::/EFI/BOOT
+	# Copy the bootloader to the boot partition.
+	mcopy -i ${DISK_IMG} ${BOOTLOADER_BINARY} ::/efi/boot/bootx64.efi
+	mcopy -i ${DISK_IMG} ${KERNEL_BINARY} ::/kernel.elf
+
+${BOOTLOADER_BINARY}:
+	make -C ${BOOTLOADER_DIR}
+
+${BUILD_DIR}:
+	mkdir -p ${BUILD_DIR}
+
+${KERNEL_BINARY}:
+	make -C ${KERNEL_DIR}
+
 clean:
-	rm -f $(BUILD_DIR)/*
-
-# Phony targets to handle non-file targets
-.PHONY: all clean os kernel kernel_entry boot
+	rm -rf ${BUILD_DIR}/*

@@ -1,5 +1,5 @@
 use crate::{println, structures::DescriptorTablePointer};
-use core::{mem::size_of, u32};
+use core::{arch::asm, mem::size_of, u32};
 
 // External function to flush the old GDT and load the new one.
 extern "C" {
@@ -93,8 +93,10 @@ pub fn gdt_init() {
         GDT.user_code.set(0, 0, 0xFA, 0xA0); // User code segment
         GDT.user_data.set(0, 0, 0xF2, 0x00); // User data segment
 
+        asm!("lgdt [{}]", in(reg) &GDT.get_pointer()); // Load the GDT
+
         // Flush the old GDT and load the new one
-        gdt_flush(&GDT.get_pointer());
+        //gdt_flush(&GDT.get_pointer());
     }
 
     println!("GDT initialized");
