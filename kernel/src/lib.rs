@@ -4,6 +4,7 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
+use drivers::screen::display::Display;
 use structures::BootInfo;
 
 mod cpu;
@@ -13,27 +14,13 @@ mod interrupts;
 mod structures;
 
 #[no_mangle] // don't mangle the name of this function
-pub extern "C" fn _start(boot_info: &BootInfo) -> ! {
-    // Test uefi boot
+pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
+    Display::init_display(&boot_info.framebuffer, &boot_info.font);
 
-    let color = 0x00FF_00FF; // purple
-    let address = boot_info.framebuffer.pointer as *mut u32;
+    cls!(); // clear the screen
+    println!("Welcome to the StorkOS!"); // print a welcome message
 
-    memset(
-        address,
-        color,
-        (boot_info.framebuffer.width * boot_info.framebuffer.height) as usize,
-    ); // fill the screen with purple
-
-    loop {} // return an exit code
-}
-
-fn memset(dest: *mut u32, val: u32, count: usize) {
-    unsafe {
-        for i in 0..count {
-            *dest.add(i) = val;
-        }
-    }
+    loop {}
 }
 
 // this function is called on panic

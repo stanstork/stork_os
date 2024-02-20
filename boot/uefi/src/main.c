@@ -9,11 +9,26 @@
 // Framebuffer structure representing a basic framebuffer.
 typedef struct
 {
-    VOID *pointer;             // Pointer to the beginning of the framebuffer in memory.
-    UINT32 width;              // Width of the framebuffer in pixels.
-    UINT32 height;             // Height of the framebuffer in pixels.
-    UINT32 pixels_per_scaline; // Number of pixels per scanline (often equals width but can be larger).
+    VOID *pointer;              // Pointer to the beginning of the framebuffer in memory.
+    UINT32 width;               // Width of the framebuffer in pixels.
+    UINT32 height;              // Height of the framebuffer in pixels.
+    UINT32 pixels_per_scanline; // Number of pixels per scanline (often equals width but can be larger).
 } Framebuffer;
+
+// PSF1 font header structure.
+typedef struct
+{
+    unsigned char magic[2];  // Magic number identifying the PSF1 format.
+    unsigned char mode;      // PSF1 mode (0 or 1).
+    unsigned char char_size; // Size of each character in bytes.
+} PSF1_HEADER;
+
+// PSF1 font structure containing the font header and glyph buffer.
+typedef struct
+{
+    PSF1_HEADER psf1_header; // Pointer to the PSF1 font header.
+    void *glyph_buffer;      // Pointer to the glyph buffer containing the font's glyphs.
+} PSF1_FONT;
 
 // Boot_Info structure containing information passed to the OS at boot time.
 typedef struct
@@ -22,6 +37,7 @@ typedef struct
     UINTN memory_map_size;             // Total size of the memory map.
     UINTN memory_map_descriptor_size;  // Size of an individual memory descriptor in the memory map.
     Framebuffer framebuffer;           // Framebuffer information for the display.
+    PSF1_FONT font;                    // Pointer to the loaded PSF1 font.
 } Boot_Info;
 
 // Global variable to hold the handle buffer for graphics protocols.
@@ -263,6 +279,115 @@ EFI_STATUS init_file_system_service(void)
 }
 
 /**
+ * load_ps1_font - Loads a PSF1 font file into memory.
+ *
+ * This function opens a PSF1 font file, validates its header, and loads the font
+ * glyphs into a buffer. It then constructs a PSF1_FONT structure containing the
+ * header and the glyph buffer.
+ *
+ * Parameters:
+ *   root_file_system - The root file system from which the font is to be loaded.
+ *   directory - The directory in which the font file is located.
+ *   path - The path to the font file.
+ *   image_handle - The handle of the image.
+ *   system_table - Pointer to the EFI system table.
+ *
+ * Returns:
+ *   PSF1_FONT* - A pointer to the loaded PSF1_FONT structure, or NULL if loading fails.
+ */
+PSF1_FONT *load_ps1_font(EFI_FILE *root_file_system, EFI_FILE *directory, CHAR16 *path, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
+{
+    EFI_STATUS status;
+    EFI_FILE *file; // File handle for the font file.
+
+    Print(L"Opening font file: %s\n", path);
+
+    status = uefi_call_wrapper(root_file_system->Open, 5, root_file_system, &file, path, EFI_FILE_MODE_READ, 0);
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to open file: %s\n", path);
+        return NULL;
+    }
+
+    PSF1_HEADER *font_header; // Pointer to the font header structure.
+
+    // Allocate memory for the font header.
+    status = uefi_call_wrapper(gBS->AllocatePool, 3, EfiLoaderData, sizeof(PSF1_HEADER), (void **)&font_header);
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to allocate pool: %r\n", status);
+        return NULL;
+    }
+
+    UINTN size = sizeof(PSF1_HEADER); // Size of the font header.
+    // Read the font header from the file.
+    status = uefi_call_wrapper(file->Read, 3, file, &size, font_header);
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to read file: %r\n", status);
+        return NULL;
+    }
+
+    // Validate the PSF1 magic number.
+    if (font_header->magic[0] != 0x36 || font_header->magic[1] != 0x04)
+    {
+        Print(L"Invalid PSF1 magic\n");
+        return NULL;
+    }
+
+    // Calculate the size of the glyph buffer based on the font mode.
+    UINTN glyph_buffer_size = font_header->char_size * 256;
+    if (font_header->mode == 1)
+    {
+        Print(L"Reading Unicode PSF1\n");
+        glyph_buffer_size = font_header->char_size * 512;
+    }
+
+    // Allocate memory for the glyph buffer.
+    void *glyph_buffer;
+    // Set the file position to the start of the glyph buffer.
+    status = uefi_call_wrapper(file->SetPosition, 2, file, sizeof(PSF1_HEADER));
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to set position: %r\n", status);
+        return NULL;
+    }
+
+    // Allocate memory for the glyph buffer.
+    status = uefi_call_wrapper(gBS->AllocatePool, 3, EfiLoaderData, glyph_buffer_size, (void **)&glyph_buffer);
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to allocate pool: %r\n", status);
+        return NULL;
+    }
+
+    // Read the glyph buffer from the file.
+    status = uefi_call_wrapper(file->Read, 3, file, &glyph_buffer_size, glyph_buffer);
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to read file: %r\n", status);
+        return NULL;
+    }
+
+    PSF1_FONT *font; // Pointer to the PSF1 font structure.
+    // Allocate memory for the PSF1 font structure.
+    status = uefi_call_wrapper(gBS->AllocatePool, 3, EfiLoaderData, sizeof(PSF1_FONT), (void **)&font);
+    if (status != EFI_SUCCESS)
+    {
+        Print(L"Failed to allocate pool: %r\n", status);
+        return NULL;
+    }
+
+    // Construct the PSF1 font structure.
+    font->psf1_header = *font_header;
+    font->glyph_buffer = glyph_buffer;
+
+    Print(L"Font loaded successfully\n");
+
+    return font;
+}
+
+/**
  * efi_main - The entry point for the UEFI application.
  *
  * This function performs the initializations necessary for a UEFI application,
@@ -366,14 +491,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle,
 
     Print(L"Set Kernel Entry Point to: '0x%llx'\n", *kernel_entry_point);
 
+    PSF1_FONT *font = load_ps1_font(root_file_system, NULL, L"\\zap-light16.psf", ImageHandle, SystemTable);
+    if (font == NULL)
+    {
+        Print(L"Failed to load font\n");
+        return EFI_LOAD_ERROR;
+    }
+
     boot_info.framebuffer.pointer =
         (VOID *)graphics_output_protocol->Mode->FrameBufferBase;
     boot_info.framebuffer.width =
         graphics_output_protocol->Mode->Info->HorizontalResolution;
     boot_info.framebuffer.height =
         graphics_output_protocol->Mode->Info->VerticalResolution;
-    boot_info.framebuffer.pixels_per_scaline =
+    boot_info.framebuffer.pixels_per_scanline =
         graphics_output_protocol->Mode->Info->PixelsPerScanLine;
+    boot_info.font = *font;
 
     Print(L"Freeing GOP handle buffer\n");
     status = uefi_call_wrapper(gBS->FreePool, 1, graphic_handle_buffer);

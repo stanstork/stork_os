@@ -43,6 +43,7 @@ ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY}
 	mmd -i ${DISK_IMG} ::/EFI/BOOT
 	# Copy the bootloader to the boot partition.
 	mcopy -i ${DISK_IMG} ${BOOTLOADER_BINARY} ::/efi/boot/bootx64.efi
+	mcopy -i ${DISK_IMG} assets/fonts/zap-light16.psf ::/zap-light16.psf
 	mcopy -i ${DISK_IMG} ${KERNEL_BINARY} ::/kernel.elf
 
 ${BOOTLOADER_BINARY}:
