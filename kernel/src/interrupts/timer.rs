@@ -1,5 +1,8 @@
 use super::isr::{InterruptStackFrame, IDT, KERNEL_CS};
-use crate::cpu::io::{outb, pic_end_master};
+use crate::{
+    cpu::io::{outb, pic_end_master},
+    print,
+};
 
 /// Represents a system timer.
 pub struct Timer {
@@ -20,7 +23,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
         TIMER.tick += 1;
     }
     // Print a dot for each timer tick (for debugging).
-    //print!(".");
+    print!(".");
 
     // Send EOI signal to the PIC.
     pic_end_master();
@@ -44,7 +47,7 @@ pub fn init_timer(freq: u32) {
         let high = ((divisor >> 8) & 0xFF) as u8; // Get the high byte of the divisor.
 
         // Configure the PIT to operate in square wave mode.
-        outb(0x43, 0b00110100); // Command port: channel 0, access mode lobyte/hibyte, square wave generator.
+        outb(0x43, 0x36); // Command port: channel 0, access mode lobyte/hibyte, square wave generator.
         outb(0x40, low); // Channel 0 data port (low byte of divisor).
         outb(0x40, high); // Channel 0 data port (high byte of divisor).
     }

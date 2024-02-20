@@ -33,7 +33,7 @@ pub struct InterruptStackFrameValue {
 pub static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
 
 /// Initialize the Interrupt Descriptor Table (IDT) and the Programmable Interrupt Controller (PIC).
-pub fn isr_install() {
+pub fn idt_init() {
     println!("Initializing IDT and PIC");
 
     unsafe {
@@ -66,6 +66,10 @@ pub fn isr_install() {
 
         // Initialize the keyboard
         init_keyboard();
+
+        PIC1_DATA.write_port(0b11111000);
+        io_wait();
+        PIC2_DATA.write_port(0b11101111);
     }
 }
 
@@ -101,6 +105,7 @@ pub fn remap_pic() {
 
     // Restore saved masks.
     PIC1_DATA.write_port(pic1);
+    io_wait();
     PIC2_DATA.write_port(pic2);
 }
 

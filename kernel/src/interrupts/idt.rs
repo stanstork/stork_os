@@ -136,11 +136,9 @@ impl InterruptDescriptorTable {
     }
 
     /// Load the IDT by setting the IDTR register with the address of the IDT.
-    pub fn load(&self) {
+    pub unsafe fn load(&self) {
         let idt_ptr = self.get_pointer();
-        unsafe {
-            asm!("lidt [{}]", in(reg) &idt_ptr, options(readonly, nostack));
-        }
+        asm!("lidt [{}]", in(reg) &idt_ptr, options(readonly, nostack));
     }
 }
 
