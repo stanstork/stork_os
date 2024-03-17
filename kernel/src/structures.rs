@@ -32,4 +32,5 @@ pub struct BootInfo {
     pub memory_map_descriptor_size: usize, // Size of an individual memory descriptor in the memory map.
     pub framebuffer: Framebuffer,          // Framebuffer information for the display.
     pub font: PSF1Font,                    // PSF1 font information for the display.
+    pub kernel_end: u64,                   // Address of the end of the kernel.
 }

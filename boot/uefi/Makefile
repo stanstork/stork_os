@@ -39,7 +39,7 @@ LDFLAGS      := -nostdlib    \
 	-L ${LIB} ${EFI_CRT_OBJS}
 
 
-C_SOURCES := ${SRC_DIR}/loader.c ${SRC_DIR}/main.c              
+C_SOURCES := ${SRC_DIR}/main.c              
 
 AS_SOURCES :=
 

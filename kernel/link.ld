@@ -1,39 +1,32 @@
-/** The physical starting address of the kernel. */
-KERNEL_PHYS_START = 1M;
-/** The size of the kernel stack. */
-KERNEL_STACK_SIZE = 0x4000;
-
+OUTPUT_FORMAT(elf64-x86-64)
 ENTRY (_start)
+. = 0x00100000;
 
 SECTIONS
 {
-	. = KERNEL_PHYS_START;
 	kernel_start = .;
 
-	.text : ALIGN (4K)
+	.text : ALIGN (0x1000)
 	{
 		*(.text*)
 	}
 
-	.rodata : ALIGN (4K)
-	{
-		*(.rodata*)
-	}
-
-	.data : ALIGN (4K)
+	.data : ALIGN (0x1000)
 	{
 		*(.data*)
 	}
 
-	.bss : ALIGN (4K)
+	.rodata : ALIGN(0x1000)
+	{
+		*(.rodata)
+	}
+
+	bss_start = .;
+
+	.bss : ALIGN(0x1000)
 	{
 		*(COMMON)
-		*(.bss*)
-
-    . = ALIGN (16);
-    stack_bottom = .;
-    . += KERNEL_STACK_SIZE;
-    stack_top = .;
+		*(.bss)
 	}
 
 	kernel_end = .;

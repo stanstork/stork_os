@@ -1,3 +1,5 @@
+use core::arch::asm;
+
 use super::{idt::InterruptDescriptorTable, timer::init_timer};
 use crate::{
     cpu::io::{
@@ -117,9 +119,26 @@ pub extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFram
 }
 
 /// Handler for page fault exceptions.
-pub extern "x86-interrupt" fn page_fault_handler(stack_frame: InterruptStackFrame) {
+pub extern "x86-interrupt" fn page_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
     println!("Interrupt: Page Fault");
+    println!("Error code: {:#x}", error_code);
+
+    println!("Accessed address: {:?}", unsafe { cr2() });
+
+    // Analyzing the error code
+    println!("Caused by write operation: {}", error_code & 0b10 != 0);
+    println!("Caused by user mode: {}", error_code & 0b100 != 0);
+
     loop {}
+}
+
+unsafe fn cr2() -> u64 {
+    let value: u64;
+    asm!("mov {}, cr2", out(reg) value);
+    value
 }
 
 /// Handler for double fault exceptions.
