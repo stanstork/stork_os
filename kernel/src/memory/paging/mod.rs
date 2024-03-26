@@ -14,6 +14,8 @@ use crate::{
 pub(crate) mod page_table_manager;
 pub(crate) mod table;
 
+pub(super) static mut PAGE_TABLE_MANAGER: Option<PageTableManager> = None;
+
 /// Initializes the page table manager with the boot information and a page frame allocator.
 ///
 /// This function sets up the initial PML4 table, maps all system memory, and ensures that the framebuffer
@@ -49,9 +51,15 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
     // Update the CR3 register to use the new page table.
     Cr3::write(pml4 as u64);
 
+    // Store the page table manager in a global static variable.
+    unsafe {
+        PAGE_TABLE_MANAGER = Some(pt_manager);
+    }
+
     println!("Page table initialized");
 }
 
+// Remaps the framebuffer memory to ensure it is accessible.
 unsafe fn remap_frame_buffer(
     boot_info: &'static BootInfo,
     pt_manager: &mut PageTableManager,

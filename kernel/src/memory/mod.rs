@@ -1,32 +1,43 @@
 use self::{
-    addr::PhysAddr, memory_descriptor::EFIMemoryDescriptor,
-    physical_page_allocator::PhysicalPageAllocator, region::Region,
+    addr::{PhysAddr, VirtAddr},
+    memory_descriptor::EFIMemoryDescriptor,
+    physical_page_allocator::PhysicalPageAllocator,
+    region::Region,
 };
-use crate::{println, structures::BootInfo};
+use crate::{println, structures::BootInfo, ALLOCATOR};
+use alloc::boxed::Box;
 
 pub(crate) mod addr;
 pub(crate) mod bitmap;
+pub(crate) mod global_allocator;
+pub(crate) mod heap;
 pub(crate) mod memory_descriptor;
 pub(crate) mod paging;
 pub(crate) mod physical_page_allocator;
 pub(crate) mod region;
 
-pub const PAGE_SIZE: usize = 4096;
-pub const KERNEL_PHYS_START: PhysAddr = 0x100000;
+pub const PAGE_SIZE: usize = 4096; // 4 KB
+pub const KERNEL_PHYS_START: PhysAddr = 0x100000; // 1 MB
+pub const HEAP_START: VirtAddr = 0x0000100000000000; // 1 TB
+pub const HEAP_PAGES: usize = 1024 * 16; // 64 MB
 
-/// Initializes the system's memory management unit.
+/// Initializes the system's memory management unit, setting up the allocator and paging.
 ///
 /// This function sets up the physical page frame allocator, reads the EFI memory map,
-/// locks the memory pages used by the kernel, and initializes paging.
+/// locks the memory pages used by the kernel, initializes paging, and sets up the heap
+/// for dynamic memory allocation. After setting up the heap, it initializes the global allocator
+/// which allows for dynamic memory allocation throughout the system.
 ///
 /// # Safety
 ///
 /// This function is unsafe because it performs various low-level memory operations, including
-/// writing to the EFI memory map, locking memory pages, and initializing the page table.
+/// writing to the EFI memory map, locking memory pages, initializing the page table, and
+/// setting up the heap. Incorrect handling of any of these operations can corrupt the system state.
 ///
 /// # Arguments
 ///
-/// * `boot_info` - A reference to the boot information provided by the bootloader.
+/// * `boot_info` - A reference to the boot information provided by the bootloader. This includes
+///   details about the memory map, kernel start and end addresses, and other boot parameters.
 pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
     let mut page_frame_allocator = PhysicalPageAllocator::new();
 
@@ -44,6 +55,17 @@ pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
 
     // Initialize paging, setting up the necessary page tables and entries.
     paging::init(boot_info, &mut page_frame_allocator);
+
+    // Initialize the heap by allocating and mapping a specified number of pages.
+    let heap = heap::init(HEAP_START, HEAP_PAGES, &mut page_frame_allocator);
+
+    // Initialize the global allocator with the heap to enable dynamic memory allocations.
+    ALLOCATOR.init(heap);
+
+    // Optionally test heap allocation and modification to verify the allocator's functionality.
+    test_heap_allocation();
+
+    println!("Memory initialized");
 }
 
 /// Calculates the total memory size based on the EFI memory map.
@@ -94,4 +116,20 @@ where
         let descriptor = unsafe { &*(descriptor_addr as *const EFIMemoryDescriptor) };
         f(descriptor);
     }
+}
+
+// This function demonstrates heap allocation and manipulation using a Box in a `no_std` environment.
+// It performs the following steps to test heap allocation:
+// 1. Allocates an integer on the heap and initializes it with the value 42.
+// 2. Modifies the value on the heap by adding 10 to it.
+// 3. Prints the modified value to demonstrate that the heap-allocated value has been successfully modified.
+fn test_heap_allocation() {
+    // Allocate an integer on the heap, initializing it with the value 42
+    let mut v = Box::new(42);
+
+    // Modify the value on the heap by adding 10
+    *v += 10;
+
+    // Print the modified value to demonstrate successful heap allocation and modification
+    println!("Heap value: {}", *v);
 }

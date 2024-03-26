@@ -8,15 +8,24 @@
 use crate::{gdt::gdt_init, interrupts::isr::idt_init};
 use core::{arch::asm, panic::PanicInfo};
 use drivers::screen::display::Display;
+use memory::global_allocator::GlobalAllocator;
 use structures::BootInfo;
 
+extern crate alloc;
+
 mod cpu;
+mod data_types;
 mod drivers;
 mod gdt;
 mod interrupts;
 mod memory;
 mod registers;
 mod structures;
+
+// The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
+// When this attribute is used, Rust will use the specified allocator for all dynamic memory allocations throughout the program.
+#[global_allocator]
+static mut ALLOCATOR: GlobalAllocator = GlobalAllocator::new();
 
 #[no_mangle] // don't mangle the name of this function
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
