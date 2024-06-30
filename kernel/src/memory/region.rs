@@ -20,6 +20,6 @@ impl Region {
     }
 
     pub fn as_mut_ptr(&self) -> *mut u8 {
-        self.start as *mut u8
+        self.start.as_mut_ptr()
     }
 }

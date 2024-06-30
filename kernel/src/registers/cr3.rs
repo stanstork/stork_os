@@ -12,4 +12,16 @@ impl Cr3 {
             );
         }
     }
+
+    pub fn read() -> usize {
+        let value: u64;
+        unsafe {
+            asm!(
+                "mov {}, cr3",
+                out(reg) value,
+                options(nostack)
+            );
+        }
+        value as usize
+    }
 }

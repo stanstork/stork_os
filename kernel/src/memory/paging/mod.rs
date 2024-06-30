@@ -1,7 +1,7 @@
 use super::physical_page_allocator::PhysicalPageAllocator;
 use crate::{
     memory::{
-        addr::ToPhysAddr,
+        addr::{PhysAddr, ToPhysAddr, VirtAddr},
         get_memory_size,
         paging::{page_table_manager::PageTableManager, table::PageTable},
         PAGE_SIZE,
@@ -15,6 +15,7 @@ pub(crate) mod page_table_manager;
 pub(crate) mod table;
 
 pub(super) static mut PAGE_TABLE_MANAGER: Option<PageTableManager> = None;
+pub static mut ROOT_PAGE_TABLE: usize = 0;
 
 /// Initializes the page table manager with the boot information and a page frame allocator.
 ///
@@ -34,7 +35,7 @@ pub(super) static mut PAGE_TABLE_MANAGER: Option<PageTableManager> = None;
 /// * `page_frame_alloc` - A reference to a physical page frame allocator.
 pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut PhysicalPageAllocator) {
     // Allocate and zero-initialize a new PML4 table.
-    let pml4 = page_frame_alloc.alloc_page().unwrap() as *mut PageTable;
+    let pml4 = page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
     (pml4 as *mut u8).write_bytes(0, PAGE_SIZE);
 
     let mut pt_manager = PageTableManager::new(pml4);
@@ -42,7 +43,7 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
 
     // Identity map all system memory.
     for i in (0..total_memory).step_by(PAGE_SIZE) {
-        unsafe { pt_manager.map_memory(i, i, page_frame_alloc) };
+        unsafe { pt_manager.map_memory(VirtAddr(i), PhysAddr(i), page_frame_alloc) };
     }
 
     // Remap the framebuffer memory.
@@ -54,6 +55,7 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
     // Store the page table manager in a global static variable.
     unsafe {
         PAGE_TABLE_MANAGER = Some(pt_manager);
+        ROOT_PAGE_TABLE = pml4 as usize;
     }
 
     println!("Page table initialized");
@@ -69,7 +71,7 @@ unsafe fn remap_frame_buffer(
     let fb_size =
         (boot_info.framebuffer.height * boot_info.framebuffer.width * 4) as usize + PAGE_SIZE;
     page_frame_alloc.lock_pages(fb_start, fb_size / PAGE_SIZE + 1);
-    for i in (fb_start..fb_start + fb_size).step_by(PAGE_SIZE) {
-        pt_manager.map_memory(i as usize, i as usize, page_frame_alloc);
+    for i in (fb_start.0..fb_start.0 + fb_size).step_by(PAGE_SIZE) {
+        pt_manager.map_memory(VirtAddr(i), PhysAddr(i), page_frame_alloc);
     }
 }

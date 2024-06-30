@@ -12,7 +12,7 @@ use crate::{
     println,
     structures::BootInfo,
 };
-use core::ptr;
+use core::{alloc::Layout, ptr};
 
 /// PhysicalPageAllocator is responsible for managing physical memory allocation in page frames.
 /// It uses a bitmap to keep track of which pages are free, reserved, or in use. This structure
@@ -72,7 +72,7 @@ impl PhysicalPageAllocator {
         let largest_region = largest_usable_memory_region(boot_info);
         println!(
             "Largest free memory region addr: 0x{:x}, size: {} Mb",
-            largest_region.start(),
+            largest_region.start().0,
             largest_region.size() / 1024 / 1024
         );
 
@@ -118,17 +118,72 @@ impl PhysicalPageAllocator {
             }
 
             // Lock the page to prevent it from being allocated again.
-            self.lock_page(i * PAGE_SIZE);
+            self.lock_page(PhysAddr(i * PAGE_SIZE));
 
             // Update the index to the next bit in the bitmap to optimize subsequent searches.
             self.bitmap_index = i + 1;
 
             // Return the physical address of the allocated page.
-            return Some(i * PAGE_SIZE);
+            return Some(PhysAddr(i * PAGE_SIZE));
         }
 
         // If no free page is found, log a message and return None.
         println!("No free pages available");
+        None
+    }
+
+    /// Allocates a number of contiguous physical pages based on the given `layout`.
+    ///
+    /// This method finds a sequence of contiguous free pages sufficient to meet the memory size
+    /// specified by `layout`. The pages are locked and marked as used in the bitmap upon allocation.
+    ///
+    /// # Arguments
+    /// * `layout` - A `Layout` instance describing the memory size and alignment requirements.
+    ///
+    /// # Returns
+    /// * `Some(PhysAddr)` where `PhysAddr` is the starting physical address of the allocated pages
+    ///   if there are enough contiguous free pages available.
+    /// * `None` if there is insufficient contiguous free memory to satisfy the request.
+    ///
+    /// # Safety
+    /// This function is unsafe as it handles raw pointers and performs no bounds checking on memory accesses.
+    pub unsafe fn alloc_pages(&mut self, layout: Layout) -> Option<PhysAddr> {
+        // Calculate the number of pages required to satisfy the layout.
+        let num_pages = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
+
+        // Iterate over the bitmap to find a sequence of contiguous free pages.
+        let mut start = None;
+        let mut count = 0;
+
+        for i in self.bitmap_index..(self.bitmap.size * 8) {
+            if !self.bitmap.get(i) {
+                // Check if the current page is free.
+                if start.is_none() {
+                    start = Some(i);
+                }
+                count += 1;
+
+                // Check if we have found enough contiguous pages.
+                if count == num_pages {
+                    // Lock and mark the pages as used.
+                    for j in start.unwrap()..(start.unwrap() + num_pages) {
+                        self.lock_page(PhysAddr(j * PAGE_SIZE));
+                    }
+
+                    // Update the bitmap index for future searches.
+                    self.bitmap_index = start.unwrap() + num_pages;
+
+                    // Return the physical address of the allocated pages.
+                    return Some(PhysAddr(start.unwrap() * PAGE_SIZE));
+                }
+            } else {
+                start = None;
+                count = 0;
+            }
+        }
+
+        // Log a message and return None if no contiguous pages are available.
+        println!("No contiguous pages of required size available");
         None
     }
 
@@ -184,9 +239,9 @@ impl PhysicalPageAllocator {
     // Reserves system pages in the bitmap.
     unsafe fn reserve_sys_pages(&mut self, total_memory_size: usize) {
         // Reserve pages starting from address 0.
-        self.reserve_pages(0, total_memory_size / PAGE_SIZE + 1);
+        self.reserve_pages(PhysAddr(0), total_memory_size / PAGE_SIZE + 1);
         // Additionally, reserve a fixed block of pages (256 pages).
-        self.reserve_pages(0, 0x100);
+        self.reserve_pages(PhysAddr(0), 0x100);
     }
 
     // Marks pages as usable based on the EFI memory map.
@@ -230,7 +285,7 @@ impl PhysicalPageAllocator {
 
     // Reserves a single page at the specified address.
     unsafe fn reserve_page(&mut self, addr: PhysAddr) {
-        let index = addr / PAGE_SIZE;
+        let index = addr.0 / PAGE_SIZE;
         if !self.bitmap.get(index) {
             self.bitmap.set(index, true);
             // Update memory counters.
@@ -241,7 +296,7 @@ impl PhysicalPageAllocator {
 
     // Unreserves a single page at the specified address.
     unsafe fn unreserve_page(&mut self, addr: PhysAddr) {
-        let index = addr / PAGE_SIZE;
+        let index = addr.0 / PAGE_SIZE;
         if self.bitmap.get(index) {
             self.bitmap.set(index, false);
             // Update memory counters and the bitmap index.
@@ -255,7 +310,7 @@ impl PhysicalPageAllocator {
 
     // Locks a single page at the specified address.
     unsafe fn lock_page(&mut self, addr: PhysAddr) {
-        let index = addr / PAGE_SIZE;
+        let index = addr.0 / PAGE_SIZE;
         if !self.bitmap.get(index) {
             self.bitmap.set(index, true);
             // Update memory counters.

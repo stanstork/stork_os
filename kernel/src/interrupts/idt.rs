@@ -9,13 +9,13 @@ use core::{
 #[derive(Clone, Copy)]
 #[repr(C, packed)]
 pub struct IdtEntry {
-    offset0: u16,   // offset bits 0..15
-    selector: u16,  // a code segment selector in GDT or LDT
-    ist: u8,        // bits 0..2 hold Interrupt Stack Table offset, rest of bits zero.
-    types_attr: u8, // type and attributes
-    offset1: u16,   // offset bits 16..31
-    offset2: u32,   // offset bits 32..63
-    ignore: u32,    // reserved
+    pub(crate) offset0: u16,   // offset bits 0..15
+    pub(crate) selector: u16,  // a code segment selector in GDT or LDT
+    pub(crate) ist: u8,        // bits 0..2 hold Interrupt Stack Table offset, rest of bits zero.
+    pub(crate) types_attr: u8, // type and attributes
+    pub(crate) offset1: u16,   // offset bits 16..31
+    pub(crate) offset2: u32,   // offset bits 32..63
+    pub(crate) ignore: u32,    // reserved
 }
 
 impl IdtEntry {

@@ -59,11 +59,11 @@ impl<const N: usize> Heap<N> {
     /// * `region` - A memory region to be added to the heap.
     pub unsafe fn add_region(&mut self, region: Region) {
         // Align the start address to the size of usize to ensure proper alignment for allocations.
-        let start = Self::align_up(region.start(), size_of::<usize>());
+        let start = Self::align_up(region.start().0, size_of::<usize>());
 
         // Align the end address down to ensure it's a multiple of the size of usize.
         // This step avoids partial block allocations at the end of the region.
-        let end = Self::align_down(region.start() + region.size(), size_of::<usize>());
+        let end = Self::align_down(region.start().0 + region.size(), size_of::<usize>());
 
         assert!(start <= end, "Invalid heap region");
 

@@ -7,12 +7,14 @@ use crate::{
         PIC2_DATA,
     },
     drivers::keyboard::init_keyboard,
+    memory::PAGE_SIZE,
     println,
 };
 
 // Constants for kernel code segment and IDT entry count.
 pub const KERNEL_CS: u16 = 0x08;
 pub const IDT_ENTRIES: usize = 256;
+pub const IST_SIZE: usize = 8 * PAGE_SIZE;
 
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
 #[repr(C, packed)]
@@ -21,7 +23,7 @@ pub struct InterruptStackFrame {
 }
 
 /// Structure representing the stack frame values.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 #[repr(C, packed)]
 pub struct InterruptStackFrameValue {
     instruction_pointer: u64,
@@ -54,6 +56,12 @@ pub fn idt_init() {
             IDT[i].set_gate(default_handler as u64, 0x8E, KERNEL_CS);
         }
 
+        IDT[0x80].set_gate(
+            syscall_handler as u64,
+            0xEE, // Present, DPL=3, Type=0xE (32-bit interrupt gate)
+            0x08, // Kernel code segment selector
+        );
+
         // Load the IDT
         IDT.load();
         println!("IDT loaded successfully");
@@ -63,7 +71,7 @@ pub fn idt_init() {
         println!("PIC remapped successfully");
 
         // Initialize the timer
-        init_timer(50);
+        init_timer();
         println!("Timer initialized with frequency: 50 Hz");
 
         // Initialize the keyboard
@@ -158,5 +166,10 @@ pub extern "x86-interrupt" fn gpf_fault_handler(stack_frame: InterruptStackFrame
 
 /// Default handler for all other interrupts.
 pub extern "x86-interrupt" fn default_handler(stack_frame: InterruptStackFrame) {
-    println!("Interrupt: Default handler");
+    // println!("Interrupt: Default handler");
+}
+
+pub extern "x86-interrupt" fn syscall_handler() {
+    println!("Interrupt: Syscall");
+    // Syscall handler code here
 }

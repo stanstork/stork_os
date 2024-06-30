@@ -3,7 +3,7 @@ use super::{
     addr::VirtAddr, paging::PAGE_TABLE_MANAGER, physical_page_allocator::PhysicalPageAllocator,
     region::Region, PAGE_SIZE,
 };
-use crate::println;
+use crate::{memory::addr::ToPhysAddr, println};
 
 pub mod heap;
 
@@ -34,7 +34,7 @@ pub unsafe fn init(
     // Map the allocated pages to the starting virtual address
     map_pages(start_addr, pages, page_frame_allocator);
     // Create a new region representing the heap space
-    let region = Region::new(start_addr, region_size);
+    let region = Region::new(start_addr.to_phys_addr(), region_size);
 
     // Initialize the heap manager and add the region to it
     let mut heap: Heap<32> = Heap::new();

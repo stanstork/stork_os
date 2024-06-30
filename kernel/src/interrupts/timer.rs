@@ -4,6 +4,9 @@ use crate::{
     print,
 };
 
+const CLOCK_TICK_RATE: u32 = 1193182u32; // The PIT's input frequency is 1.193182 MHz.
+const TIMER_TICK_RATE: u32 = 100; // The timer interrupt frequency is 100 Hz.
+
 /// Represents a system timer.
 pub struct Timer {
     /// The number of ticks since the timer was initialized.
@@ -29,26 +32,17 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
     pic_end_master();
 }
 
-/// Initializes the system timer to a given frequency.
-///
-/// The frequency determines how often the timer interrupt is triggered.
-///
-/// # Arguments
-///
-/// * `freq` - The frequency at which the timer should tick.
-pub fn init_timer(freq: u32) {
+pub fn init_timer() {
     unsafe {
         // Set the timer interrupt handler in the IDT.
         IDT[32].set_gate(timer_interrupt_handler as u64, 0x8E, KERNEL_CS);
 
-        // Calculate the divisor for the given frequency.
-        let divisor = 1193180 / freq; // The PIT's input frequency is 1.193180 MHz.
-        let low = (divisor & 0xFF) as u8; // Get the low byte of the divisor.
-        let high = ((divisor >> 8) & 0xFF) as u8; // Get the high byte of the divisor.
+        // Calculate the latch value for the given frequency.
+        let latch = ((CLOCK_TICK_RATE + TIMER_TICK_RATE / 2) / TIMER_TICK_RATE) as u16;
 
-        // Configure the PIT to operate in square wave mode.
-        outb(0x43, 0x36); // Command port: channel 0, access mode lobyte/hibyte, square wave generator.
-        outb(0x40, low); // Channel 0 data port (low byte of divisor).
-        outb(0x40, high); // Channel 0 data port (high byte of divisor).
+        // Set the PIT to the desired frequency.
+        outb(0x43, 0x34);
+        outb(0x40, (latch & 0xFF) as u8);
+        outb(0x40, (latch > 8) as u8);
     }
 }

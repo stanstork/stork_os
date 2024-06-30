@@ -17,9 +17,11 @@ pub(crate) mod physical_page_allocator;
 pub(crate) mod region;
 
 pub const PAGE_SIZE: usize = 4096; // 4 KB
-pub const KERNEL_PHYS_START: PhysAddr = 0x100000; // 1 MB
-pub const HEAP_START: VirtAddr = 0x0000100000000000; // 1 TB
+pub const KERNEL_PHYS_START: PhysAddr = PhysAddr(0x100000); // 1 MB
+pub const HEAP_START: VirtAddr = VirtAddr(0x0000100000000000); // 1 TB
 pub const HEAP_PAGES: usize = 1024 * 16; // 64 MB
+
+pub static mut PAGE_FRAME_ALLOCATOR: Option<PhysicalPageAllocator> = None;
 
 /// Initializes the system's memory management unit, setting up the allocator and paging.
 ///
@@ -47,7 +49,7 @@ pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
     println!("Free memory: {} MB", page_frame_allocator.free_memory_mb());
 
     // Calculate the size and number of pages used by the kernel based on its start and end addresses.
-    let kernel_size = boot_info.kernel_end as usize - KERNEL_PHYS_START;
+    let kernel_size = boot_info.kernel_end as usize - KERNEL_PHYS_START.0;
     let kernel_pages = (kernel_size / PAGE_SIZE) + 1;
 
     // Lock the memory pages occupied by the kernel to prevent their use by other processes.
@@ -58,9 +60,13 @@ pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
 
     // Initialize the heap by allocating and mapping a specified number of pages.
     let heap = heap::init(HEAP_START, HEAP_PAGES, &mut page_frame_allocator);
+    let heap_size = HEAP_PAGES * PAGE_SIZE;
 
     // Initialize the global allocator with the heap to enable dynamic memory allocations.
     ALLOCATOR.init(heap);
+
+    // Store the physical page frame allocator in a global static variable for future use.
+    PAGE_FRAME_ALLOCATOR = Some(page_frame_allocator);
 
     // Optionally test heap allocation and modification to verify the allocator's functionality.
     test_heap_allocation();
@@ -98,7 +104,7 @@ pub(super) fn largest_usable_memory_region(boot_info: &'static BootInfo) -> Regi
         }
     });
 
-    Region::new(largest_region_start, largest_region_size)
+    Region::new(PhysAddr(largest_region_start), largest_region_size)
 }
 
 /// Utility function to iterate over the EFI memory map and apply a function to each memory descriptor.

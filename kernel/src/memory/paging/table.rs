@@ -37,8 +37,22 @@ pub struct PageEntry(usize);
 /// Each page table can potentially map up to 2MB of virtual memory (512 entries * 4KB page size).
 #[repr(C)]
 #[repr(align(4096))]
+#[derive(Debug)]
 pub struct PageTable {
     pub(crate) entries: [PageEntry; 512],
+}
+
+impl PageTable {
+    #[inline]
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut PageEntry> {
+        let ptr = self.entries.as_mut_ptr();
+        (0..512).map(move |i| unsafe { &mut *ptr.add(i) })
+    }
+
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &PageEntry> {
+        (0..512).map(move |i| &self.entries[i])
+    }
 }
 
 // Define a wrapper around the raw pointer.
@@ -93,10 +107,10 @@ impl TableLevel {
 
     pub fn index(&self, virt_addr: VirtAddr) -> usize {
         match self {
-            TableLevel::PML4 => (virt_addr >> 39) & 0x1FF,
-            TableLevel::PDP => (virt_addr >> 30) & 0x1FF,
-            TableLevel::PD => (virt_addr >> 21) & 0x1FF,
-            TableLevel::PT => (virt_addr >> 12) & 0x1FF,
+            TableLevel::PML4 => (virt_addr.0 >> 39) & 0x1FF,
+            TableLevel::PDP => (virt_addr.0 >> 30) & 0x1FF,
+            TableLevel::PD => (virt_addr.0 >> 21) & 0x1FF,
+            TableLevel::PT => (virt_addr.0 >> 12) & 0x1FF,
         }
     }
 }
@@ -130,13 +144,15 @@ impl PageTablePtr {
         index: usize,
         page_frame_alloc: &mut PhysicalPageAllocator,
     ) -> PageTablePtr {
-        let page_table_addr = page_frame_alloc.alloc_page().unwrap() as *mut PageTable;
+        let page_table_addr = page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
         // Zero out the new page table.
         (page_table_addr as *mut u8).write_bytes(0, PAGE_SIZE);
 
         // Set up the current entry to point to the new table.
         self[index].set_frame_addr(page_table_addr as usize);
-        self[index].set_flags(PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE);
+        self[index].set_flags(
+            PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE | PageEntryFlags::ACCESSED,
+        );
 
         PageTablePtr::new(page_table_addr, self.level.next_level())
     }
