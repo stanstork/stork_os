@@ -1,4 +1,4 @@
-use crate::memory::{addr::VirtAddr, physical_page_allocator::PhysicalPageAllocator, PAGE_SIZE};
+use crate::memory::{addr::VirtAddr, PAGE_SIZE};
 use bitflags::bitflags;
 use core::ops::{Index, IndexMut};
 
@@ -20,7 +20,7 @@ bitflags! {
 }
 
 /// Represents the level of a page table in the x86_64 architecture.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableLevel {
     PML4,
     PDP,
@@ -31,7 +31,7 @@ pub enum TableLevel {
 /// Represents a single entry in a page table.
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
-pub struct PageEntry(usize);
+pub struct PageEntry(pub usize);
 
 /// Represents a page table, which consists of 512 entries in x86_64 architecture.
 /// Each page table can potentially map up to 2MB of virtual memory (512 entries * 4KB page size).
@@ -121,10 +121,10 @@ impl PageTablePtr {
         PageTablePtr { ptr, level }
     }
 
-    pub unsafe fn next(
+    pub unsafe fn next<F: FnMut() -> *mut PageTable>(
         &mut self,
         virt_addr: VirtAddr,
-        page_frame_alloc: &mut PhysicalPageAllocator,
+        frame_alloc: &mut F,
     ) -> Option<PageTablePtr> {
         let index = self.level.index(virt_addr);
         let entry = &self[index];
@@ -135,23 +135,23 @@ impl PageTablePtr {
             Some(PageTablePtr::new(addr as *mut PageTable, level))
         } else {
             // Create the next level table if not present.
-            Some(self.create_next_table(index, page_frame_alloc))
+            Some(self.create_next_table(index, frame_alloc))
         }
     }
 
-    unsafe fn create_next_table(
+    unsafe fn create_next_table<F: FnMut() -> *mut PageTable>(
         &mut self,
         index: usize,
-        page_frame_alloc: &mut PhysicalPageAllocator,
+        frame_alloc: &mut F,
     ) -> PageTablePtr {
-        let page_table_addr = page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
+        let page_table_addr = frame_alloc();
         // Zero out the new page table.
         (page_table_addr as *mut u8).write_bytes(0, PAGE_SIZE);
 
         // Set up the current entry to point to the new table.
         self[index].set_frame_addr(page_table_addr as usize);
         self[index].set_flags(
-            PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE | PageEntryFlags::ACCESSED,
+            PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE | PageEntryFlags::USER_ACCESSIBLE,
         );
 
         PageTablePtr::new(page_table_addr, self.level.next_level())

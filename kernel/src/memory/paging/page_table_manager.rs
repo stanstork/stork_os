@@ -1,13 +1,13 @@
 use core::ptr;
 
 use super::{
-    table::{PageEntryFlags, PageTable, PageTablePtr, TableLevel},
+    table::{PageEntry, PageEntryFlags, PageTable, PageTablePtr, TableLevel},
     ROOT_PAGE_TABLE,
 };
 use crate::memory::{
     addr::{PhysAddr, VirtAddr},
     physical_page_allocator::PhysicalPageAllocator,
-    PAGE_SIZE,
+    PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
 };
 
 pub struct PageTableManager {
@@ -42,18 +42,19 @@ impl PageTableManager {
     /// * `virt`: The virtual address to map.
     /// * `phys`: The physical address to map to.
     /// * `page_frame_alloc`: A reference to a physical page frame allocator.
-    pub unsafe fn map_memory(
+    pub unsafe fn map_memory<F: FnMut() -> *mut PageTable>(
         &mut self,
         virt: VirtAddr,
         phys: PhysAddr,
-        page_frame_alloc: &mut PhysicalPageAllocator,
+        frame_alloc: &mut F,
+        user: bool,
     ) {
         // Traverse the page table hierarchy, creating tables as needed, and chain the calls.
         let mut pt = self
             .pml4
-            .next(virt, page_frame_alloc)
-            .and_then(|mut pdp| pdp.next(virt, page_frame_alloc))
-            .and_then(|mut pd| pd.next(virt, page_frame_alloc))
+            .next(virt, frame_alloc)
+            .and_then(|mut pdp| pdp.next(virt, frame_alloc))
+            .and_then(|mut pd| pd.next(virt, frame_alloc))
             .unwrap();
 
         // Calculate the index for the final level based on the virtual address.
@@ -64,90 +65,155 @@ impl PageTableManager {
 
         // Set the frame address to the provided physical address and mark it as writable.
         entry.set_frame_addr(phys.0 as usize);
-        entry.set_flags(
-            PageEntryFlags::WRITABLE | PageEntryFlags::PRESENT | PageEntryFlags::ACCESSED,
-        );
+
+        let mut flags = PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE;
+        if user {
+            flags |= PageEntryFlags::USER_ACCESSIBLE;
+        }
+        entry.set_flags(flags);
     }
 
-    pub unsafe fn create_page_table(
-        page_table_ptr: &mut PageTablePtr,
-        virt_addr: VirtAddr,
-        page_frame_alloc: &mut PhysicalPageAllocator,
-        flags: PageEntryFlags,
-    ) -> bool {
-        let index = page_table_ptr.level.index(virt_addr);
-        let entry = &mut page_table_ptr[index];
+    pub unsafe fn clone_pml4(src: *mut PageTable, kernel: *mut PageTable) -> *mut PageTable {
+        let new_page = PAGE_FRAME_ALLOCATOR
+            .as_mut()
+            .unwrap()
+            .alloc_page()
+            .unwrap()
+            .0 as *mut PageTable;
+        new_page.write_bytes(0, PAGE_SIZE);
 
-        if entry.is_present() {
-            true
-        } else {
-            match page_frame_alloc.alloc_page() {
-                Some(frame) => {
-                    let page_table_addr = frame.0 as *mut PageTable;
-                    (page_table_addr as *mut u8).write_bytes(0, PAGE_SIZE);
+        for i in 0..512 {
+            let src_entry = &mut (*src)[i];
+            if src_entry.get_frame_addr().is_none() {
+                continue;
+            }
 
-                    entry.set_frame_addr(page_table_addr as usize);
-                    entry.set_flags(flags);
+            let entry = src_entry.0;
+            let kernel_entry = (*kernel)[i].0;
 
-                    true
-                }
-                None => false,
+            if entry == kernel_entry {
+                (*new_page)[i] = *src_entry;
+            } else {
+                let origin = src_entry.get_frame_addr().unwrap() as *mut PageTable;
+                let kern = (*kernel)[i].get_frame_addr().unwrap() as *mut PageTable;
+                let pt = Self::clone_pdp(origin, kern);
+                (*new_page)[i].set_frame_addr(pt as usize);
+                (*new_page)[i].set_flags(
+                    PageEntryFlags::PRESENT
+                        | PageEntryFlags::WRITABLE
+                        | PageEntryFlags::USER_ACCESSIBLE,
+                );
             }
         }
+
+        new_page
     }
 
-    pub fn get_physical_address(
-        page_table_ptr: &mut PageTablePtr,
-        virt: VirtAddr,
-    ) -> Option<PhysAddr> {
-        let index = page_table_ptr.level.index(virt);
-        let entry = &page_table_ptr[index];
+    unsafe fn clone_pdp(origin: *mut PageTable, kern: *mut PageTable) -> *mut PageTable {
+        let new_page = PAGE_FRAME_ALLOCATOR
+            .as_mut()
+            .unwrap()
+            .alloc_page()
+            .unwrap()
+            .0 as *mut PageTable;
+        new_page.write_bytes(0, PAGE_SIZE);
 
-        if !entry.is_present() {
-            None
-        } else {
-            entry.get_frame_addr().map(|addr| {
-                let offset = virt.0 & 0xFFF;
-                PhysAddr(addr + offset)
-            })
-        }
-    }
-
-    pub fn create_address_space(
-        page_frame_alloc: &mut PhysicalPageAllocator,
-    ) -> Option<*mut PageTable> {
-        let space = unsafe {
-            page_frame_alloc
-                .alloc_page()
-                .map(|frame| frame.0 as *mut PageTable)
-        };
-
-        if let Some(page_table) = space {
-            unsafe {
-                let kernel_page_table = ROOT_PAGE_TABLE as *const PageTable;
-
-                Self::clear_page_directory(page_table);
-                Self::clone_kernel_space(page_table, kernel_page_table);
+        for i in 0..512 {
+            let src_entry = &mut (*origin)[i];
+            if src_entry.get_frame_addr().is_none() {
+                continue;
             }
-            Some(page_table)
-        } else {
-            None
+
+            let entry = src_entry.0;
+            let kernel_entry = (*kern)[i].0;
+
+            if entry == kernel_entry {
+                (*new_page)[i] = *src_entry;
+            } else {
+                let origin = src_entry.get_frame_addr().unwrap() as *mut PageTable;
+                let kern = (*kern)[i].get_frame_addr().unwrap() as *mut PageTable;
+                let pt = Self::clone_pd(origin, kern);
+                (*new_page)[i].set_frame_addr(pt as usize);
+                (*new_page)[i].set_flags(
+                    PageEntryFlags::PRESENT
+                        | PageEntryFlags::WRITABLE
+                        | PageEntryFlags::USER_ACCESSIBLE,
+                );
+            }
         }
+
+        new_page
     }
 
-    unsafe fn clone_kernel_space(dst: *mut PageTable, src: *const PageTable) {
-        assert!(
-            !dst.is_null() && !src.is_null(),
-            "Source or destination cannot be null"
-        );
-        ptr::copy_nonoverlapping(
-            src as *const u8,
-            dst as *mut u8,
-            512 * core::mem::size_of::<usize>(),
-        );
+    unsafe fn clone_pd(origin: *mut PageTable, kern: *mut PageTable) -> *mut PageTable {
+        let new_page = PAGE_FRAME_ALLOCATOR
+            .as_mut()
+            .unwrap()
+            .alloc_page()
+            .unwrap()
+            .0 as *mut PageTable;
+        new_page.write_bytes(0, PAGE_SIZE);
+
+        for i in 0..512 {
+            let src_entry = &mut (*origin)[i];
+            if src_entry.get_frame_addr().is_none() {
+                continue;
+            }
+
+            let entry = src_entry.0;
+            let kernel_entry = (*kern)[i].0;
+
+            if entry == kernel_entry {
+                (*new_page)[i] = *src_entry;
+            } else {
+                let origin = src_entry.get_frame_addr().unwrap() as *mut PageTable;
+                let kern = (*kern)[i].get_frame_addr().unwrap() as *mut PageTable;
+                let pt = Self::clone_pt(origin, kern);
+                (*new_page)[i].set_frame_addr(pt as usize);
+                (*new_page)[i].set_flags(
+                    PageEntryFlags::PRESENT
+                        | PageEntryFlags::WRITABLE
+                        | PageEntryFlags::USER_ACCESSIBLE,
+                );
+            }
+        }
+
+        new_page
     }
 
-    unsafe fn clear_page_directory(page_table: *mut PageTable) {
-        ptr::write_bytes(page_table as *mut u8, 0, PAGE_SIZE);
+    unsafe fn clone_pt(origin: *mut PageTable, kern: *mut PageTable) -> *mut PageTable {
+        let new_page = PAGE_FRAME_ALLOCATOR
+            .as_mut()
+            .unwrap()
+            .alloc_page()
+            .unwrap()
+            .0 as *mut PageTable;
+        new_page.write_bytes(0, PAGE_SIZE);
+
+        for i in 0..512 {
+            let src_entry = &mut (*origin)[i];
+            if src_entry.get_frame_addr().is_none() {
+                continue;
+            }
+
+            let entry = src_entry.0;
+            let kernel_entry = (*kern)[i].0;
+
+            if entry == kernel_entry {
+                (*new_page)[i] = *src_entry;
+            } else {
+                let origin = src_entry.get_frame_addr().unwrap() as *mut PageTable;
+                let kern = (*kern)[i].get_frame_addr().unwrap() as *mut PageTable;
+                let pt = Self::clone_pt(origin, kern);
+                (*new_page)[i].set_frame_addr(pt as usize);
+                (*new_page)[i].set_flags(
+                    PageEntryFlags::PRESENT
+                        | PageEntryFlags::WRITABLE
+                        | PageEntryFlags::USER_ACCESSIBLE,
+                );
+            }
+        }
+
+        new_page
     }
 }

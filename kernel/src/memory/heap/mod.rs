@@ -1,7 +1,10 @@
 use self::heap::Heap;
 use super::{
-    addr::VirtAddr, paging::PAGE_TABLE_MANAGER, physical_page_allocator::PhysicalPageAllocator,
-    region::Region, PAGE_SIZE,
+    addr::{PhysAddr, VirtAddr},
+    paging::{table::PageTable, PAGE_TABLE_MANAGER},
+    physical_page_allocator::PhysicalPageAllocator,
+    region::Region,
+    PAGE_SIZE,
 };
 use crate::{memory::addr::ToPhysAddr, println};
 
@@ -51,14 +54,15 @@ unsafe fn map_pages(
     pages: usize,
     page_frame_allocator: &mut PhysicalPageAllocator,
 ) {
+    let mut frame_alloc = || page_frame_allocator.alloc_page().unwrap().0 as *mut PageTable;
     for _ in 0..pages {
-        let page = page_frame_allocator
-            .alloc_page()
-            .expect("Failed to allocate page");
-        PAGE_TABLE_MANAGER
-            .as_mut()
-            .unwrap()
-            .map_memory(start_addr, page, page_frame_allocator);
+        let page = frame_alloc();
+        PAGE_TABLE_MANAGER.as_mut().unwrap().map_memory(
+            start_addr,
+            PhysAddr(page as usize),
+            &mut frame_alloc,
+            true,
+        );
         start_addr += PAGE_SIZE;
     }
 }

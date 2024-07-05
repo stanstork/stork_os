@@ -15,7 +15,8 @@ QEMU_FLAGS :=                                                \
 	-serial stdio                                              \
 	-usb                                                       \
 	-net none                                                  \
-	-vga std
+	-vga std \
+	-d int
 
 .PHONY: all clean emu
 
