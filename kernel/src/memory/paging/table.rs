@@ -57,7 +57,7 @@ impl PageTable {
 
 // Define a wrapper around the raw pointer.
 pub struct PageTablePtr {
-    ptr: *mut PageTable,
+    pub ptr: *mut PageTable,
     pub(super) level: TableLevel,
 }
 

@@ -8,9 +8,9 @@ KERNEL_ELF := kernel.elf
 all: kernel 
 
 # Build the Rust kernel and move the output to the build directory
-kernel: gdt
+kernel: gdt task
 	cargo build --release
-	ld.lld -o $(BUILD_DIR)/$(KERNEL_ELF) -T link.ld $(RUST_TARGET) $(BUILD_DIR)/gdt_flush.o
+	ld.lld -o $(BUILD_DIR)/$(KERNEL_ELF) -T link.ld $(RUST_TARGET) $(BUILD_DIR)/gdt_flush.o $(BUILD_DIR)/task.o
 
 # Clean up build files
 clean:
@@ -19,6 +19,9 @@ clean:
 # Compile the GDT flush function
 gdt:
 	nasm -f elf64 $(ASM_DIR)/gdt_flush.asm -o $(BUILD_DIR)/gdt_flush.o
+
+task:
+	nasm -f elf64 $(ASM_DIR)/task.asm -o $(BUILD_DIR)/task.o
 
 # Phony targets to handle non-file targets
 .PHONY: all clean

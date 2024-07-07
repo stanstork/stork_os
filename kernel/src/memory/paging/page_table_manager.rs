@@ -1,12 +1,6 @@
-use core::ptr;
-
-use super::{
-    table::{PageEntry, PageEntryFlags, PageTable, PageTablePtr, TableLevel},
-    ROOT_PAGE_TABLE,
-};
+use super::table::{PageEntryFlags, PageTable, PageTablePtr, TableLevel};
 use crate::memory::{
     addr::{PhysAddr, VirtAddr},
-    physical_page_allocator::PhysicalPageAllocator,
     PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
 };
 
@@ -215,5 +209,18 @@ impl PageTableManager {
         }
 
         new_page
+    }
+
+    pub unsafe fn phys_addr(&self, virt: VirtAddr) -> PhysAddr {
+        let plm4_entry = &self.pml4[TableLevel::PML4.index(virt)];
+        let pdp = plm4_entry.get_frame_addr().unwrap() as *mut PageTable;
+
+        let pdp_entry = &(*pdp)[TableLevel::PDP.index(virt)];
+        let pd = pdp_entry.get_frame_addr().unwrap() as *mut PageTable;
+
+        let pd_entry = &(*pd)[TableLevel::PD.index(virt)];
+        let pt = pd_entry.get_frame_addr().unwrap() as *mut PageTable;
+
+        let pt_entry = &(*pt)[TableLevel::PT.index(virt)];
     }
 }

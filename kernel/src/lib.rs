@@ -17,11 +17,13 @@ use crate::{
     cpu::interrupts::{disable_interrupts, enable_interrupts},
     interrupts::isr::idt_init,
 };
+use alloc::boxed::Box;
 use core::{
     alloc::{GlobalAlloc, Layout},
     arch::asm,
+    mem::size_of,
     panic::PanicInfo,
-    ptr,
+    ptr::{self, write_bytes},
 };
 use cpu::{gdt::GDTR, tss};
 use drivers::screen::display::Display;
@@ -37,6 +39,7 @@ use memory::{
 };
 use registers::cr3::Cr3;
 use structures::BootInfo;
+use task::{create_kernel_task, create_user_task, switch_task};
 
 extern crate alloc;
 
@@ -47,6 +50,7 @@ mod interrupts;
 mod memory;
 mod registers;
 mod structures;
+mod task;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
 // When this attribute is used, Rust will use the specified allocator for all dynamic memory allocations throughout the program.
@@ -57,6 +61,7 @@ pub(crate) static mut BOOT_INFO: Option<&'static BootInfo> = None;
 
 pub const KERNEL_STACK_SIZE: usize = 0x2000; // 8 KB
 pub const KERNEL_STACK_START: u64 = 0x000700000000000; // 128 TB
+pub const STACK_SIZE: usize = 0x4000; // 16 KB
 
 pub static mut INITIAL_RSP: u64 = 0;
 
@@ -85,7 +90,6 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
     unsafe { BOOT_INFO = Some(boot_info) };
 
-    // unsafe { switch_to_user_mode() };
     unsafe { proc_prep() };
 
     loop {}
@@ -99,17 +103,10 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 pub unsafe fn proc_prep() {
-    move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    let mut kernel_task = create_kernel_task(kernel_mode_entry as u64);
+    let user_task = create_user_task(user_mode_entry as u64);
 
-    let root_page_table = &mut *(ROOT_PAGE_TABLE as *mut PageTable);
-    let new_page_table = PageTableManager::clone_pml4(root_page_table, root_page_table);
-
-    println!(
-        "Writing to CR3 with PML4 address: {:#x}",
-        new_page_table as u64
-    );
-
-    Cr3::write(new_page_table as u64);
+    switch_task(&mut kernel_task, &user_task);
 }
 
 // Moves the stack to a new location.
@@ -193,55 +190,12 @@ fn copy_nonoverlapping(src: *const u8, dst: *mut u8, len: usize) {
     }
 }
 
-pub fn allocate_user_stack() -> u64 {
-    // Define the stack size
-    const STACK_SIZE: usize = 0x4000; // 16 KB
-
-    // Allocate memory for the stack using the heap allocator
-    let layout = Layout::from_size_align(STACK_SIZE, 4096).unwrap();
-    let user_stack_address = unsafe { ALLOCATOR.alloc(layout) };
-
-    // Return the top of the stack (stack grows downwards)
-    user_stack_address as u64 + STACK_SIZE as u64
-}
-
-pub unsafe fn switch_to_user_mode() {
-    let user_stack: u64 = allocate_user_stack(); // Use the function to allocate user stack
-    let user_rip: u64 = user_mode_entry as u64;
-
-    // let new_page_table = setup_page_tables();
-    // println!(
-    //     "Writing to CR3 with PML4 address: {:#x}",
-    //     new_page_table as u64
-    // );
-    // Cr3::write(new_page_table as u64);
-
-    asm!(
-        "cli",                           // Disable interrupts
-                                // Load the stack segment selector for user mode
-        "mov rsp, {0}",                  // Load the stack pointer with the user mode stack address
-        "push 0x23",                     // Push the data segment selector for user mode
-        "push {0}",                      // Push the user mode stack address
-        "pushf",                         // Push the flags register
-        "pop rax",                       // Pop flags into rax to modify
-        "or rax, 0x200",                 // Set the interrupt enable flag (IF)
-        "push rax",                      // Push the modified flags
-        "push 0x1B",                     // Push the code segment selector for user mode
-        "push {1}",                      // Push the user mode instruction pointer
-        "iretq",                         // Interrupt return to switch to user mode
-        in(reg) user_stack,
-        in(reg) user_rip,
-        options(noreturn)
-    );
-}
-
-// #[no_mangle]
 extern "C" fn user_mode_entry() -> ! {
-    // This is the entry point for user mode.
-    // Write user mode code here.
-
     println!("Switched to user mode!");
-    loop {
-        // User mode code goes here.
-    }
+    loop {}
+}
+
+extern "C" fn kernel_mode_entry() -> ! {
+    println!("Switched to kernel mode!");
+    loop {}
 }

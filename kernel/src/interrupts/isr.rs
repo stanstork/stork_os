@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::{arch::asm, fmt::Debug};
 
 use super::{idt::InterruptDescriptorTable, timer::init_timer};
 use crate::{
@@ -160,6 +160,7 @@ pub extern "x86-interrupt" fn double_fault_handler(
 
 /// Handler for general protection fault exceptions.
 pub extern "x86-interrupt" fn gpf_fault_handler(stack_frame: InterruptStackFrame) {
+    println!("{:?}", stack_frame);
     println!("Interrupt: General Protection fault");
     loop {}
 }
@@ -172,4 +173,21 @@ pub extern "x86-interrupt" fn default_handler(stack_frame: InterruptStackFrame) 
 pub extern "x86-interrupt" fn syscall_handler() {
     println!("Interrupt: Syscall");
     // Syscall handler code here
+}
+
+impl Debug for InterruptStackFrame {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let instruction_pointer = self.value.instruction_pointer;
+        let code_segment = self.value.code_segment;
+        let cpu_flags = self.value.cpu_flags;
+        let stack_pointer = self.value.stack_pointer;
+        let stack_segment = self.value.stack_segment;
+        f.debug_struct("InterruptStackFrame")
+            .field("instruction_pointer", &instruction_pointer)
+            .field("code_segment", &code_segment)
+            .field("cpu_flags", &cpu_flags)
+            .field("stack_pointer", &stack_pointer)
+            .field("stack_segment", &stack_segment)
+            .finish()
+    }
 }
