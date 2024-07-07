@@ -222,5 +222,6 @@ impl PageTableManager {
         let pt = pd_entry.get_frame_addr().unwrap() as *mut PageTable;
 
         let pt_entry = &(*pt)[TableLevel::PT.index(virt)];
+        PhysAddr(pt_entry.get_frame_addr().unwrap())
     }
 }
