@@ -1,7 +1,10 @@
 use super::table::{PageEntryFlags, PageTable, PageTablePtr, TableLevel};
-use crate::memory::{
-    addr::{PhysAddr, VirtAddr},
-    PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
+use crate::{
+    memory::{
+        addr::{PhysAddr, VirtAddr},
+        PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
+    },
+    print, println,
 };
 
 pub struct PageTableManager {
@@ -92,11 +95,8 @@ impl PageTableManager {
                 let kern = (*kernel)[i].get_frame_addr().unwrap() as *mut PageTable;
                 let pt = Self::clone_pdp(origin, kern);
                 (*new_page)[i].set_frame_addr(pt as usize);
-                (*new_page)[i].set_flags(
-                    PageEntryFlags::PRESENT
-                        | PageEntryFlags::WRITABLE
-                        | PageEntryFlags::USER_ACCESSIBLE,
-                );
+                (*new_page)[i].set_flags(PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE);
+                println!("Cloned PDP");
             }
         }
 
@@ -128,11 +128,7 @@ impl PageTableManager {
                 let kern = (*kern)[i].get_frame_addr().unwrap() as *mut PageTable;
                 let pt = Self::clone_pd(origin, kern);
                 (*new_page)[i].set_frame_addr(pt as usize);
-                (*new_page)[i].set_flags(
-                    PageEntryFlags::PRESENT
-                        | PageEntryFlags::WRITABLE
-                        | PageEntryFlags::USER_ACCESSIBLE,
-                );
+                (*new_page)[i].set_flags(PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE);
             }
         }
 
@@ -164,11 +160,7 @@ impl PageTableManager {
                 let kern = (*kern)[i].get_frame_addr().unwrap() as *mut PageTable;
                 let pt = Self::clone_pt(origin, kern);
                 (*new_page)[i].set_frame_addr(pt as usize);
-                (*new_page)[i].set_flags(
-                    PageEntryFlags::PRESENT
-                        | PageEntryFlags::WRITABLE
-                        | PageEntryFlags::USER_ACCESSIBLE,
-                );
+                (*new_page)[i].set_flags(PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE);
             }
         }
 
@@ -200,11 +192,7 @@ impl PageTableManager {
                 let kern = (*kern)[i].get_frame_addr().unwrap() as *mut PageTable;
                 let pt = Self::clone_pt(origin, kern);
                 (*new_page)[i].set_frame_addr(pt as usize);
-                (*new_page)[i].set_flags(
-                    PageEntryFlags::PRESENT
-                        | PageEntryFlags::WRITABLE
-                        | PageEntryFlags::USER_ACCESSIBLE,
-                );
+                (*new_page)[i].set_flags(PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE);
             }
         }
 

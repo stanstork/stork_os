@@ -4,7 +4,7 @@ use self::{
     physical_page_allocator::PhysicalPageAllocator,
     region::Region,
 };
-use crate::{println, structures::BootInfo, ALLOCATOR};
+use crate::{println, structures::BootInfo, ALLOCATOR, CODE_ADDR};
 use alloc::boxed::Box;
 
 pub(crate) mod addr;
@@ -61,6 +61,7 @@ pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
     // Initialize the heap by allocating and mapping a specified number of pages.
     let heap = heap::init(HEAP_START, HEAP_PAGES, &mut page_frame_allocator);
     let heap_size = HEAP_PAGES * PAGE_SIZE;
+    CODE_ADDR = HEAP_START.0 as u64 + heap_size as u64;
 
     // Initialize the global allocator with the heap to enable dynamic memory allocations.
     ALLOCATOR.init(heap);
@@ -138,4 +139,17 @@ fn test_heap_allocation() {
 
     // Print the modified value to demonstrate successful heap allocation and modification
     println!("Heap value: {}", *v);
+}
+
+pub unsafe fn alloc_page() -> PhysAddr {
+    unsafe {
+        PhysAddr(
+            PAGE_FRAME_ALLOCATOR
+                .as_mut()
+                .unwrap()
+                .alloc_page()
+                .unwrap()
+                .0,
+        )
+    }
 }

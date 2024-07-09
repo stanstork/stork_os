@@ -134,7 +134,7 @@ pub extern "x86-interrupt" fn page_fault_handler(
     println!("Interrupt: Page Fault");
     println!("Error code: {:#x}", error_code);
 
-    println!("Accessed address: {:?}", unsafe { cr2() });
+    println!("Accessed address: {:#x}", unsafe { cr2() });
 
     // Analyzing the error code
     println!("Caused by write operation: {}", error_code & 0b10 != 0);

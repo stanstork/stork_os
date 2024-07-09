@@ -29,7 +29,7 @@ struct Registers {
 #[repr(C)]
 pub struct Task {
     pub stack_pointer: u64,
-    stack: *mut u8,
+    pub stack: *mut u8,
 }
 
 fn create_task_stack(stack_size: usize, entry_point: u64, is_kernel: bool) -> *mut u8 {
@@ -71,7 +71,47 @@ fn create_task_stack(stack_size: usize, entry_point: u64, is_kernel: bool) -> *m
     stack_top as *mut u8
 }
 
-fn allocate_stack_memory(stack_size: usize) -> *mut u8 {
+fn create_task_stack2(stack: *mut u8, entry_point: u64, is_kernel: bool) -> *mut u8 {
+    // let stack = allocate_stack_memory(stack_size);
+    let stack_size = 4096;
+    let mut stack_top = unsafe { stack.add(stack_size) as *mut Registers };
+
+    unsafe {
+        stack_top = stack_top.offset(-1);
+        *stack_top = Registers {
+            r15: 0,
+            r14: 0,
+            r13: 0,
+            r12: 0,
+            r11: 0,
+            r10: 0,
+            r9: 0,
+            r8: 0,
+            rsi: 0,
+            rdi: 0,
+            rdx: 0,
+            rcx: 0,
+            rbx: 0,
+            rax: 0,
+            rbp: 0,
+            rip: entry_point,
+            cs: if is_kernel { 0x08 } else { 0x1B },
+            rflags: 0x202,
+            rsp: stack_top as u64 + core::mem::size_of::<Registers>() as u64,
+            ss: if is_kernel { 0x10 } else { 0x23 },
+        };
+
+        // Ensure stack alignment
+        stack_top = (stack_top as usize & !0xF) as *mut Registers;
+
+        // Print the stack for debugging
+        print_stack(stack, stack_size);
+    }
+
+    stack_top as *mut u8
+}
+
+pub fn allocate_stack_memory(stack_size: usize) -> *mut u8 {
     unsafe { alloc::alloc::alloc_zeroed(Layout::from_size_align(stack_size, 16).unwrap()) }
 }
 
@@ -93,9 +133,9 @@ pub fn create_kernel_task(entry_point: u64) -> Task {
     }
 }
 
-pub fn create_user_task(entry_point: u64) -> Task {
-    let stack_size = 4096; // Adjust the stack size as needed
-    let stack = create_task_stack(stack_size, entry_point, false);
+pub fn create_user_task(entry_point: u64, stack: *mut u8) -> Task {
+    // let stack_size = 4096; // Adjust the stack size as needed
+    let stack = create_task_stack2(stack, entry_point, false);
 
     Task {
         stack_pointer: stack as u64,

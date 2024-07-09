@@ -18,6 +18,15 @@ impl GlobalAllocator {
     pub fn init(&mut self, heap: Heap<32>) {
         self.0 = UnsafeCell::new(heap);
     }
+
+    pub fn alloc_page(&self) -> *mut u8 {
+        let heap = unsafe { &mut *self.0.get() };
+        let layout = Layout::from_size_align(4096, 4096).unwrap();
+        match heap.alloc(layout) {
+            Ok(ptr) => ptr.as_ptr(),
+            Err(_) => panic!("Out of memory"),
+        }
+    }
 }
 
 // Implements the GlobalAlloc trait for GlobalAllocator, allowing it to be used as the allocator for the system.

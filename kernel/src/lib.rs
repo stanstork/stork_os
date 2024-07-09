@@ -29,6 +29,7 @@ use cpu::{gdt::GDTR, tss};
 use drivers::screen::display::Display;
 use memory::{
     addr::{PhysAddr, VirtAddr},
+    alloc_page,
     global_allocator::GlobalAllocator,
     paging::{
         page_table_manager::{self, PageTableManager},
@@ -39,7 +40,7 @@ use memory::{
 };
 use registers::cr3::Cr3;
 use structures::BootInfo;
-use task::{create_kernel_task, create_user_task, switch_task};
+use task::{allocate_stack_memory, create_kernel_task, create_user_task, switch_task};
 
 extern crate alloc;
 
@@ -102,9 +103,48 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
+pub static mut CODE_ADDR: u64 = 0;
+
 pub unsafe fn proc_prep() {
+    asm!("cli");
+    move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+
     let mut kernel_task = create_kernel_task(kernel_mode_entry as u64);
-    let user_task = create_user_task(user_mode_entry as u64);
+
+    let stack_size = PAGE_SIZE;
+    let stack = allocate_stack_memory(stack_size);
+    let stack_start = stack as usize;
+    let stack_end = stack_start + stack_size;
+
+    // let user_task = create_user_task(user_mode_entry as u64, stack);
+
+    let root_page_table = &mut *(ROOT_PAGE_TABLE as *mut PageTable);
+    let new_page_table = PageTableManager::clone_pml4(root_page_table, root_page_table);
+    let mut page_table_manager = PageTableManager::new(new_page_table);
+
+    let mut frame_alloc = || unsafe { alloc_page().0 } as *mut PageTable;
+
+    // Map the stack into the new user-space page table
+    for i in (stack_start..stack_end).step_by(PAGE_SIZE) {
+        let phys_frame = frame_alloc();
+        page_table_manager.map_memory(
+            VirtAddr(i),
+            PhysAddr(phys_frame as usize),
+            &mut frame_alloc,
+            true,
+        );
+        println!(
+            "Mapped memory at {:#x} to frame {:#x}",
+            i, phys_frame as usize
+        );
+    }
+
+    let user_code_phys = user_mode_entry as u64;
+
+    // Switch to the new page table
+    Cr3::write(new_page_table as u64);
+    let user_task = create_user_task(user_code_phys as u64, stack);
+    // Perform the context switch to the user task
 
     switch_task(&mut kernel_task, &user_task);
 }
@@ -191,11 +231,61 @@ fn copy_nonoverlapping(src: *const u8, dst: *mut u8, len: usize) {
 }
 
 extern "C" fn user_mode_entry() -> ! {
-    println!("Switched to user mode!");
+    // println!("Switched to user mode!11");
+
+    // let mut kernel_addr = 0x1000 as *mut u8;
+    // let val = unsafe { *kernel_addr };
+    // println!("Value at {:?}: {}", kernel_addr, val);
+
     loop {}
 }
 
 extern "C" fn kernel_mode_entry() -> ! {
     println!("Switched to kernel mode!");
     loop {}
+}
+
+fn test_memory_access(
+    user_addr: *mut u8,
+    user_end_addr: *mut u8,
+    kernel_addr: *mut u8,
+    kernel_end_addr: *mut u8,
+) {
+    unsafe {
+        // Test user space access
+        if user_addr < user_end_addr {
+            println!(
+                "Attempting to read from user space address: {:?}",
+                user_addr
+            );
+            let value = *user_addr; // Read from user space
+            println!("Read value: {}", value);
+
+            println!("Attempting to write to user space address: {:?}", user_addr);
+            *user_addr = 0xAA; // Write to user space
+            println!("Write successful.");
+        } else {
+            println!("User space address out of range.");
+        }
+
+        // Test kernel space access
+        if kernel_addr < kernel_end_addr {
+            println!(
+                "Attempting to read from kernel space address: {:?}",
+                kernel_addr
+            );
+            // let result = std::panic::catch_unwind(|| {
+            let _value = *kernel_addr; // Attempt to read from kernel space
+
+            println!(
+                "Attempting to write to kernel space address: {:?}",
+                kernel_addr
+            );
+            // let result = std::panic::catch_unwind(|| {
+            *kernel_addr = 0xAA; // Attempt to write to kernel space
+                                 // });
+        } else {
+            println!("Kernel space address out of range.");
+        }
+    }
 }

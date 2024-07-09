@@ -38,6 +38,8 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
     let pml4 = page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
     (pml4 as *mut u8).write_bytes(0, PAGE_SIZE);
 
+    println!("PML4 allocated at: {:#x}", pml4 as usize);
+
     let mut pt_manager = PageTableManager::new(pml4);
     let total_memory = get_memory_size(boot_info);
 
