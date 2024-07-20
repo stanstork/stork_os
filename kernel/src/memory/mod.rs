@@ -18,6 +18,7 @@ pub(crate) mod region;
 
 pub const PAGE_SIZE: usize = 4096; // 4 KB
 pub const KERNEL_PHYS_START: PhysAddr = PhysAddr(0x100000); // 1 MB
+pub static mut KERNEL_PHYS_END: PhysAddr = PhysAddr(0); // To be set later
 pub const HEAP_START: VirtAddr = VirtAddr(0x0000100000000000); // 1 TB
 pub const HEAP_PAGES: usize = 1024 * 16; // 64 MB
 
@@ -52,8 +53,16 @@ pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
     let kernel_size = boot_info.kernel_end as usize - KERNEL_PHYS_START.0;
     let kernel_pages = (kernel_size / PAGE_SIZE) + 1;
 
+    println!("Kernel pages: {}", kernel_pages);
+    KERNEL_PHYS_END.0 = boot_info.kernel_end as usize;
+
+    println!("KERNEL_PHYS_END: {:#x}", KERNEL_PHYS_END.0);
+
     // Lock the memory pages occupied by the kernel to prevent their use by other processes.
     page_frame_allocator.lock_pages(KERNEL_PHYS_START, kernel_pages);
+
+    let alloc_page = page_frame_allocator.alloc_page();
+    println!("Allocated page: {:#x}", alloc_page.unwrap().0);
 
     // Initialize paging, setting up the necessary page tables and entries.
     paging::init(boot_info, &mut page_frame_allocator);

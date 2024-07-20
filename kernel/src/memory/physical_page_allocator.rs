@@ -7,7 +7,7 @@ use super::{
 use crate::{
     memory::{
         get_memory_size, iter_and_apply, largest_usable_memory_region,
-        memory_descriptor::EfiMemoryType,
+        memory_descriptor::EfiMemoryType, KERNEL_PHYS_END, KERNEL_PHYS_START,
     },
     println,
     structures::BootInfo,
@@ -83,11 +83,17 @@ impl PhysicalPageAllocator {
         // Initialize the bitmap for memory tracking.
         self.init_bitmap(&largest_region, memory_size);
 
-        // Reserve pages for system use.
-        self.reserve_sys_pages(memory_size);
+        self.reserve_pages(PhysAddr(0), memory_size / PAGE_SIZE + 1);
 
         // Mark usable regions in the memory map.
         self.mark_usable(boot_info);
+
+        // Reserve system pages.
+        self.lock_pages(PhysAddr(0), 0x100);
+        self.lock_pages(
+            KERNEL_PHYS_START,
+            (boot_info.kernel_end as usize - KERNEL_PHYS_START.0) / PAGE_SIZE + 1,
+        );
 
         // Lock the bitmap to ensure it remains unchanged.
         self.lock_bitmap();
@@ -207,11 +213,11 @@ impl PhysicalPageAllocator {
         // Iterate over the range of pages and lock each one.
         for i in 0..size {
             // Calculate the physical address of the current page to lock.
-            let current_page_address = start + i * PAGE_SIZE;
-
+            let current_page_address = start.0 + i * PAGE_SIZE;
             // Lock the current page to mark it as in use.
-            self.lock_page(current_page_address);
+            self.lock_page(PhysAddr(current_page_address));
         }
+        println!("Locked {} pages starting from address {:#x}", size, start.0)
     }
 
     /// Returns the amount of free memory in megabytes.

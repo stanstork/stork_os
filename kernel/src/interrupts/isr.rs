@@ -131,14 +131,20 @@ pub extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    println!("Interrupt: Page Fault");
+    let faulting_address: usize;
+    let error_code: usize = error_code as usize;
+
+    unsafe {
+        asm!("mov {}, cr2", out(reg) faulting_address);
+    }
+
+    let instruction_pointer = stack_frame.value.instruction_pointer;
+    let stack_pointer = stack_frame.value.stack_pointer;
+
+    println!("Page fault at address: {:#x}", faulting_address);
     println!("Error code: {:#x}", error_code);
-
-    println!("Accessed address: {:#x}", unsafe { cr2() });
-
-    // Analyzing the error code
-    println!("Caused by write operation: {}", error_code & 0b10 != 0);
-    println!("Caused by user mode: {}", error_code & 0b100 != 0);
+    println!("Instruction pointer: {:#x}", instruction_pointer);
+    println!("Stack pointer: {:#x}", stack_pointer);
 
     loop {}
 }

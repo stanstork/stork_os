@@ -46,12 +46,49 @@ impl PageTable {
     #[inline]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut PageEntry> {
         let ptr = self.entries.as_mut_ptr();
-        (0..512).map(move |i| unsafe { &mut *ptr.add(i) })
+        (256..512).map(move |i| unsafe { &mut *ptr.add(i) })
     }
 
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &PageEntry> {
-        (0..512).map(move |i| &self.entries[i])
+        (256..512).map(move |i| &self.entries[i])
+    }
+
+    pub fn get_entry(&self, index: usize) -> &PageEntry {
+        &self.entries[index]
+    }
+
+    pub fn get_entry_for_address(&self, virt_addr: u64) -> Option<&PageEntry> {
+        let pml4_index = ((virt_addr >> 39) & 0x1FF) as usize;
+        let pdpt_index = ((virt_addr >> 30) & 0x1FF) as usize;
+        let pd_index = ((virt_addr >> 21) & 0x1FF) as usize;
+        let pt_index = ((virt_addr >> 12) & 0x1FF) as usize;
+
+        let pml4_entry = self.get_entry(pml4_index);
+        if !pml4_entry.is_present() {
+            return None;
+        }
+
+        let pdpt = unsafe { &*(pml4_entry.get_frame_addr()? as *const PageTable) };
+        let pdpt_entry = pdpt.get_entry(pdpt_index);
+        if !pdpt_entry.is_present() {
+            return None;
+        }
+
+        let pd = unsafe { &*(pdpt_entry.get_frame_addr()? as *const PageTable) };
+        let pd_entry = pd.get_entry(pd_index);
+        if !pd_entry.is_present() {
+            return None;
+        }
+
+        let pt = unsafe { &*(pd_entry.get_frame_addr()? as *const PageTable) };
+        let pt_entry = pt.get_entry(pt_index);
+
+        if pt_entry.is_present() {
+            Some(pt_entry)
+        } else {
+            None
+        }
     }
 }
 
@@ -139,6 +176,14 @@ impl PageTablePtr {
         }
     }
 
+    pub unsafe fn next_table(&mut self, virt_addr: VirtAddr) -> Option<PageTablePtr> {
+        let index = self.level.index(virt_addr);
+        let entry = &self[index];
+        let addr = entry.get_frame_addr()?;
+        let level = self.level.next_level();
+        Some(PageTablePtr::new(addr as *mut PageTable, level))
+    }
+
     unsafe fn create_next_table<F: FnMut() -> *mut PageTable>(
         &mut self,
         index: usize,
@@ -150,9 +195,7 @@ impl PageTablePtr {
 
         // Set up the current entry to point to the new table.
         self[index].set_frame_addr(page_table_addr as usize);
-        self[index].set_flags(
-            PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE | PageEntryFlags::USER_ACCESSIBLE,
-        );
+        self[index].set_flags(PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE);
 
         PageTablePtr::new(page_table_addr, self.level.next_level())
     }

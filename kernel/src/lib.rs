@@ -38,6 +38,7 @@ use memory::{
     },
     PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
 };
+use process::process::Process;
 use registers::cr3::Cr3;
 use structures::BootInfo;
 use task::{allocate_stack_memory, create_kernel_task, create_user_task, switch_task};
@@ -49,6 +50,7 @@ mod data_types;
 mod drivers;
 mod interrupts;
 mod memory;
+mod process;
 mod registers;
 mod structures;
 mod task;
@@ -91,7 +93,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
     unsafe { BOOT_INFO = Some(boot_info) };
 
-    unsafe { proc_prep() };
+    unsafe { test_proc() };
 
     loop {}
 }
@@ -105,9 +107,15 @@ fn panic(_info: &PanicInfo) -> ! {
 
 pub static mut CODE_ADDR: u64 = 0;
 
+pub unsafe fn test_proc() {
+    move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    let proc = Process::create_user_process();
+    proc.borrow().threads[0].borrow_mut().exec();
+}
+
 pub unsafe fn proc_prep() {
     asm!("cli");
-    move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    // move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
 
     let mut kernel_task = create_kernel_task(kernel_mode_entry as u64);
 
@@ -119,7 +127,7 @@ pub unsafe fn proc_prep() {
     // let user_task = create_user_task(user_mode_entry as u64, stack);
 
     let root_page_table = &mut *(ROOT_PAGE_TABLE as *mut PageTable);
-    let new_page_table = PageTableManager::clone_pml4(root_page_table, root_page_table);
+    let new_page_table = PageTableManager::clone_pml4(root_page_table);
     let mut page_table_manager = PageTableManager::new(new_page_table);
 
     let mut frame_alloc = || unsafe { alloc_page().0 } as *mut PageTable;
@@ -139,11 +147,9 @@ pub unsafe fn proc_prep() {
         );
     }
 
-    let user_code_phys = user_mode_entry as u64;
-
     // Switch to the new page table
     Cr3::write(new_page_table as u64);
-    let user_task = create_user_task(user_code_phys as u64, stack);
+    let user_task = create_user_task(user_mode_entry as u64, stack);
     // Perform the context switch to the user task
 
     switch_task(&mut kernel_task, &user_task);
@@ -231,7 +237,7 @@ fn copy_nonoverlapping(src: *const u8, dst: *mut u8, len: usize) {
 }
 
 extern "C" fn user_mode_entry() -> ! {
-    // println!("Switched to user mode!11");
+    println!("Switched to user mode!11");
 
     // let mut kernel_addr = 0x1000 as *mut u8;
     // let val = unsafe { *kernel_addr };

@@ -1,6 +1,7 @@
 [bits 64]
 
 global context_switch
+global start_thread
 
 context_switch:
     ; Save current task state
@@ -49,3 +50,30 @@ context_switch:
     ; popfq
 
 	iretq
+
+start_thread:
+    ; Load the stack pointer from the argument (rdi)
+    mov rsp, rdi
+
+    ; Restore general-purpose registers from the stack
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+
+    ; Enable interrupts
+    sti
+
+    ; Return to the thread's entry point
+    iretq

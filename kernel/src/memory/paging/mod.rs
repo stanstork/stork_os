@@ -44,7 +44,6 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
     let total_memory = get_memory_size(boot_info);
 
     let mut frame_alloc = || page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
-    // Identity map all system memory.
     for i in (0..total_memory).step_by(PAGE_SIZE) {
         unsafe { pt_manager.map_memory(VirtAddr(i), PhysAddr(i), &mut frame_alloc, true) };
     }
