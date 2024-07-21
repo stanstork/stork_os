@@ -58,33 +58,6 @@ impl Display {
         }
     }
 
-    /// Initializes the display with the given framebuffer and font.
-    pub fn init_display(framebuffer: &'static Framebuffer, font: &'static PSF1Font) {
-        let backbuffer = Framebuffer {
-            pointer: framebuffer.pointer as *mut u32,
-            width: framebuffer.width,
-            height: framebuffer.height,
-            pixels_per_scanline: framebuffer.pixels_per_scanline,
-        };
-
-        unsafe {
-            DISPLAY = Display {
-                framebuffer,
-                backbuffer,
-                font,
-                console: Console {
-                    cursor: (0, 0),
-                    fg_color: 0xFFFFFFFF, // White
-                    bg_color: 0xFF000000, // Black
-                    width: (framebuffer.width / 8) as usize,
-                    height: (framebuffer.height / 16) as usize,
-                },
-                char_width: 8,
-                char_height: 16,
-            };
-        }
-    }
-
     /// Clears the screen by writing spaces to every position in the framebuffer memory.
     pub unsafe fn clear_screen(&mut self) {
         let clear_char = 0xFF000000; // Black space character to clear with
@@ -208,6 +181,33 @@ impl Display {
         } else {
             DISPLAY.console.cursor.1 = 0;
         }
+    }
+}
+
+/// Initializes the display with the given framebuffer and font.
+pub fn init(framebuffer: &'static Framebuffer, font: &'static PSF1Font) {
+    let backbuffer = Framebuffer {
+        pointer: framebuffer.pointer as *mut u32,
+        width: framebuffer.width,
+        height: framebuffer.height,
+        pixels_per_scanline: framebuffer.pixels_per_scanline,
+    };
+
+    unsafe {
+        DISPLAY = Display {
+            framebuffer,
+            backbuffer,
+            font,
+            console: Console {
+                cursor: (0, 0),
+                fg_color: 0xFFFFFFFF, // White
+                bg_color: 0xFF000000, // Black
+                width: (framebuffer.width / 8) as usize,
+                height: (framebuffer.height / 16) as usize,
+            },
+            char_width: 8,
+            char_height: 16,
+        };
     }
 }
 

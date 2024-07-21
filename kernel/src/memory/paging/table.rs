@@ -93,6 +93,7 @@ impl PageTable {
 }
 
 // Define a wrapper around the raw pointer.
+#[derive(Clone)]
 pub struct PageTablePtr {
     pub ptr: *mut PageTable,
     pub(super) level: TableLevel,
@@ -158,7 +159,21 @@ impl PageTablePtr {
         PageTablePtr { ptr, level }
     }
 
-    pub unsafe fn next<F: FnMut() -> *mut PageTable>(
+    /// Advances to the next level page table, creating it if necessary.
+    ///
+    /// This function navigates to the next level page table for the given virtual address.
+    /// If the next level table does not exist, it creates one using the provided frame allocator.
+    ///
+    /// # Arguments
+    /// * `virt_addr` - The virtual address for which to find the next level page table.
+    /// * `frame_alloc` - A mutable reference to a closure that allocates frames.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// An `Option` containing the next level `PageTablePtr` if successful, or `None` if it fails.
+    pub unsafe fn next_or_create<F: FnMut() -> *mut PageTable>(
         &mut self,
         virt_addr: VirtAddr,
         frame_alloc: &mut F,
@@ -176,12 +191,26 @@ impl PageTablePtr {
         }
     }
 
-    pub unsafe fn next_table(&mut self, virt_addr: VirtAddr) -> Option<PageTablePtr> {
+    /// Advances to the next level page table without creating it.
+    ///
+    /// This function navigates to the next level page table for the given virtual address.
+    /// It does not create a new table if the next level table does not exist.
+    ///
+    /// # Arguments
+    /// * `virt_addr` - The virtual address for which to find the next level page table.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// The next level `PageTablePtr`.
+    pub unsafe fn next(&mut self, virt_addr: VirtAddr) -> PageTablePtr {
         let index = self.level.index(virt_addr);
         let entry = &self[index];
-        let addr = entry.get_frame_addr()?;
+
+        let addr = entry.get_frame_addr().unwrap();
         let level = self.level.next_level();
-        Some(PageTablePtr::new(addr as *mut PageTable, level))
+        PageTablePtr::new(addr as *mut PageTable, level)
     }
 
     unsafe fn create_next_table<F: FnMut() -> *mut PageTable>(

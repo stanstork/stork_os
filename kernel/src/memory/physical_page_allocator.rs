@@ -7,7 +7,7 @@ use super::{
 use crate::{
     memory::{
         get_memory_size, iter_and_apply, largest_usable_memory_region,
-        memory_descriptor::EfiMemoryType, KERNEL_PHYS_END, KERNEL_PHYS_START,
+        memory_descriptor::EfiMemoryType, KERNEL_PHYS_START,
     },
     println,
     structures::BootInfo,

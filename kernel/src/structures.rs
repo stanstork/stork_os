@@ -34,8 +34,3 @@ pub struct BootInfo {
     pub font: PSF1Font,                    // PSF1 font information for the display.
     pub kernel_end: u64,                   // Address of the end of the kernel.
 }
-
-pub trait Stack {
-    fn top(&self) -> usize;
-    fn bottom(&self) -> usize;
-}

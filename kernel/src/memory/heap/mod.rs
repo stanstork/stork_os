@@ -55,11 +55,8 @@ unsafe fn map_pages(
     page_frame_allocator: &mut PhysicalPageAllocator,
 ) {
     let mut frame_alloc = || page_frame_allocator.alloc_page().unwrap().0 as *mut PageTable;
-    for i in 0..pages {
+    for _ in 0..pages {
         let page = frame_alloc();
-        if i == 0 {
-            println!("Heap start address: {:#x}", page as usize);
-        }
         PAGE_TABLE_MANAGER.as_mut().unwrap().map_memory(
             start_addr,
             PhysAddr(page as usize),

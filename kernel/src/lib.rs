@@ -13,87 +13,57 @@
 #![feature(sync_unsafe_cell)]
 #![feature(const_size_of_val)]
 
-use crate::{
-    cpu::interrupts::{disable_interrupts, enable_interrupts},
-    interrupts::isr::idt_init,
-};
-use alloc::boxed::Box;
-use core::{
-    alloc::{GlobalAlloc, Layout},
-    arch::asm,
-    mem::size_of,
-    panic::PanicInfo,
-    ptr::{self, write_bytes},
-};
-use cpu::{gdt::GDTR, tss};
-use drivers::screen::display::Display;
-use memory::{
-    addr::{PhysAddr, VirtAddr},
-    alloc_page,
-    global_allocator::GlobalAllocator,
-    paging::{
-        page_table_manager::{self, PageTableManager},
-        table::PageTable,
-        ROOT_PAGE_TABLE,
-    },
-    PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
-};
+use core::{arch::asm, panic::PanicInfo};
+use drivers::screen::display::{self};
+use interrupts::{isr, no_interrupts};
+use memory::global_allocator::GlobalAllocator;
 use process::process::Process;
-use registers::cr3::Cr3;
 use structures::BootInfo;
-use task::{allocate_stack_memory, create_kernel_task, create_user_task, switch_task};
 
 extern crate alloc;
 
 mod cpu;
 mod data_types;
 mod drivers;
+mod gdt;
 mod interrupts;
 mod memory;
 mod process;
 mod registers;
 mod structures;
-mod task;
+mod tss;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
 // When this attribute is used, Rust will use the specified allocator for all dynamic memory allocations throughout the program.
 #[global_allocator]
 static mut ALLOCATOR: GlobalAllocator = GlobalAllocator::new();
 
-pub(crate) static mut BOOT_INFO: Option<&'static BootInfo> = None;
-
-pub const KERNEL_STACK_SIZE: usize = 0x2000; // 8 KB
-pub const KERNEL_STACK_START: u64 = 0x000700000000000; // 128 TB
 pub const STACK_SIZE: usize = 0x4000; // 16 KB
-
 pub static mut INITIAL_RSP: u64 = 0;
 
 #[no_mangle] // don't mangle the name of this function
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     unsafe {
         asm!("mov {}, rsp", out(reg) INITIAL_RSP);
+
+        no_interrupts(|| {
+            display::init(&boot_info.framebuffer, &boot_info.font);
+
+            cls!(); // clear the screen
+            println!("Welcome to the StorkOS!"); // print a welcome message
+
+            gdt::init(); // initialize the Global Descriptor Table
+            isr::init(); // initialize the Interrupt Descriptor Table
+
+            // initialize the memory
+            memory::init(boot_info);
+        });
+
+        interrupts::enable_interrupts();
+        tss::load_task_state_segment();
+
+        test_proc();
     }
-
-    disable_interrupts();
-
-    Display::init_display(&boot_info.framebuffer, &boot_info.font);
-
-    cls!(); // clear the screen
-    println!("Welcome to the StorkOS!"); // print a welcome message
-
-    GDTR.load(); // initialize the Global Descriptor Table
-    idt_init(); // initialize the Interrupt Descriptor Table
-
-    // initialize the memory
-    unsafe { memory::init(boot_info) };
-
-    enable_interrupts();
-
-    unsafe { tss::load_task_state_segment() };
-
-    unsafe { BOOT_INFO = Some(boot_info) };
-
-    unsafe { test_proc() };
 
     loop {}
 }
@@ -108,190 +78,11 @@ fn panic(_info: &PanicInfo) -> ! {
 pub static mut CODE_ADDR: u64 = 0;
 
 pub unsafe fn test_proc() {
-    move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    // move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    process::move_stack(
+        process::KERNEL_STACK_START as *mut u8,
+        process::KERNEL_STACK_SIZE as u64,
+    );
     let proc = Process::create_user_process();
     proc.borrow().threads[0].borrow_mut().exec();
-}
-
-pub unsafe fn proc_prep() {
-    asm!("cli");
-    // move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
-
-    let mut kernel_task = create_kernel_task(kernel_mode_entry as u64);
-
-    let stack_size = PAGE_SIZE;
-    let stack = allocate_stack_memory(stack_size);
-    let stack_start = stack as usize;
-    let stack_end = stack_start + stack_size;
-
-    // let user_task = create_user_task(user_mode_entry as u64, stack);
-
-    let root_page_table = &mut *(ROOT_PAGE_TABLE as *mut PageTable);
-    let new_page_table = PageTableManager::clone_pml4(root_page_table);
-    let mut page_table_manager = PageTableManager::new(new_page_table);
-
-    let mut frame_alloc = || unsafe { alloc_page().0 } as *mut PageTable;
-
-    // Map the stack into the new user-space page table
-    for i in (stack_start..stack_end).step_by(PAGE_SIZE) {
-        let phys_frame = frame_alloc();
-        page_table_manager.map_memory(
-            VirtAddr(i),
-            PhysAddr(phys_frame as usize),
-            &mut frame_alloc,
-            true,
-        );
-        println!(
-            "Mapped memory at {:#x} to frame {:#x}",
-            i, phys_frame as usize
-        );
-    }
-
-    // Switch to the new page table
-    Cr3::write(new_page_table as u64);
-    let user_task = create_user_task(user_mode_entry as u64, stack);
-    // Perform the context switch to the user task
-
-    switch_task(&mut kernel_task, &user_task);
-}
-
-// Moves the stack to a new location.
-// https://web.archive.org/web/20160326122214/http://jamesmolloy.co.uk/tutorial_html/9.-Multitasking.html
-fn move_stack(new_stack_start: *mut u8, size: u64) {
-    let root_page_table = unsafe { &mut *(ROOT_PAGE_TABLE as *mut PageTable) };
-    let mut page_table_manager = PageTableManager::new(root_page_table);
-    let mut frame_alloc = || unsafe {
-        PAGE_FRAME_ALLOCATOR
-            .as_mut()
-            .unwrap()
-            .alloc_page()
-            .unwrap()
-            .0
-    } as *mut PageTable;
-
-    unsafe {
-        let mut i = new_stack_start as u64;
-        while i >= (new_stack_start as u64 - size) {
-            let addr = PAGE_FRAME_ALLOCATOR
-                .as_mut()
-                .unwrap()
-                .alloc_page()
-                .unwrap()
-                .0;
-            page_table_manager.map_memory(
-                VirtAddr(i as usize),
-                PhysAddr(addr),
-                &mut frame_alloc,
-                true,
-            );
-            i = i.wrapping_sub(0x1000);
-        }
-
-        // Flush the TLB by reading and writing the page directory address again.
-        let cr3 = Cr3::read();
-        Cr3::write(cr3 as u64);
-
-        let old_stack_pointer: u64;
-        asm!("mov {}, rsp", out(reg) old_stack_pointer);
-
-        let old_base_pointer: u64;
-        asm!("mov {}, rbp", out(reg) old_base_pointer);
-
-        let offset = new_stack_start as u64 - INITIAL_RSP;
-        let new_stack_pointer = old_stack_pointer + offset;
-        let new_base_pointer = old_base_pointer + offset;
-
-        copy_nonoverlapping(
-            old_stack_pointer as *const u8,
-            new_stack_pointer as *mut u8,
-            (INITIAL_RSP - old_stack_pointer) as usize,
-        );
-
-        // Backtrace through the original stack, copying new values into the new stack.
-        let mut i = new_stack_start as u64;
-        while i > new_stack_start as u64 - size {
-            let tmp = *(i as *const u64);
-
-            if old_stack_pointer < tmp && tmp < INITIAL_RSP {
-                let new_tmp = tmp + offset;
-                *(i as *mut u64) = new_tmp;
-            }
-
-            i = i.wrapping_sub(8);
-        }
-
-        // Change stacks.
-        asm!("mov rsp, {}", in(reg) new_stack_pointer);
-        asm!("mov rbp, {}", in(reg) new_base_pointer);
-    }
-}
-
-fn copy_nonoverlapping(src: *const u8, dst: *mut u8, len: usize) {
-    unsafe {
-        let mut i = 0;
-        while i < len {
-            *dst.add(i) = *src.add(i);
-            i += 1;
-        }
-    }
-}
-
-extern "C" fn user_mode_entry() -> ! {
-    println!("Switched to user mode!11");
-
-    // let mut kernel_addr = 0x1000 as *mut u8;
-    // let val = unsafe { *kernel_addr };
-    // println!("Value at {:?}: {}", kernel_addr, val);
-
-    loop {}
-}
-
-extern "C" fn kernel_mode_entry() -> ! {
-    println!("Switched to kernel mode!");
-    loop {}
-}
-
-fn test_memory_access(
-    user_addr: *mut u8,
-    user_end_addr: *mut u8,
-    kernel_addr: *mut u8,
-    kernel_end_addr: *mut u8,
-) {
-    unsafe {
-        // Test user space access
-        if user_addr < user_end_addr {
-            println!(
-                "Attempting to read from user space address: {:?}",
-                user_addr
-            );
-            let value = *user_addr; // Read from user space
-            println!("Read value: {}", value);
-
-            println!("Attempting to write to user space address: {:?}", user_addr);
-            *user_addr = 0xAA; // Write to user space
-            println!("Write successful.");
-        } else {
-            println!("User space address out of range.");
-        }
-
-        // Test kernel space access
-        if kernel_addr < kernel_end_addr {
-            println!(
-                "Attempting to read from kernel space address: {:?}",
-                kernel_addr
-            );
-            // let result = std::panic::catch_unwind(|| {
-            let _value = *kernel_addr; // Attempt to read from kernel space
-
-            println!(
-                "Attempting to write to kernel space address: {:?}",
-                kernel_addr
-            );
-            // let result = std::panic::catch_unwind(|| {
-            *kernel_addr = 0xAA; // Attempt to write to kernel space
-                                 // });
-        } else {
-            println!("Kernel space address out of range.");
-        }
-    }
 }

@@ -1,21 +1,16 @@
 use super::id::{IdAllocator, Pid, Tid};
 use crate::{
-    cpu::gdt::PrivilegeLevel,
     memory::{
         addr::{PhysAddr, VirtAddr},
-        paging::{
-            page_table_manager::{self, PageTableManager},
-            table::{PageEntry, PageEntryFlags, PageTable},
-            ROOT_PAGE_TABLE,
-        },
-        PAGE_FRAME_ALLOCATOR, PAGE_SIZE,
+        paging::{page_table_manager::PageTableManager, table::PageTable, ROOT_PAGE_TABLE},
     },
     print, println,
     registers::cr3::Cr3,
     ALLOCATOR,
 };
-use alloc::{alloc::alloc_zeroed, rc::Rc, vec::Vec};
-use core::{alloc::Layout, cell::RefCell, mem::size_of, ptr::copy_nonoverlapping};
+use alloc::rc::Rc;
+use alloc::vec::Vec;
+use core::{cell::RefCell, ptr::copy_nonoverlapping};
 
 pub const STACK_SIZE: usize = 4096;
 pub const KERNEL_CODE_SEGMENT: u16 = 1;
@@ -76,24 +71,7 @@ extern "C" {
 
 impl Process {
     pub fn create_kernel_process() -> Self {
-        let root_page_table = unsafe { &mut *(ROOT_PAGE_TABLE as *mut PageTable) };
-        let page_table = root_page_table as *mut PageTable;
-
-        println!("Root page table: {:#x}", page_table as usize);
-
-        let process = Process {
-            pid: Pid::next(),
-            page_table,
-            threads: Vec::new(),
-        };
-
-        // let thread = Thread::create_idle_thread(Rc::clone(&Rc::new(RefCell::new(process))));
-
-        Self {
-            pid: Pid::next(),
-            page_table,
-            threads: alloc::vec![],
-        }
+        todo!("Create kernel process")
     }
 
     pub fn create_user_process() -> Rc<RefCell<Process>> {
@@ -223,7 +201,7 @@ impl Thread {
 
         copy_nonoverlapping(address as *const u8, virt_addr as *mut u8, size);
 
-        PageTableManager::set_user_accessible(
+        PageTableManager::map_user_page(
             page_table,
             VirtAddr(virt_addr as usize),
             PhysAddr(phys_addr.0 as usize),

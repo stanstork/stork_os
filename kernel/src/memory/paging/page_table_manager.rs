@@ -1,15 +1,13 @@
-use super::{
-    table::{PageEntryFlags, PageTable, PageTablePtr, TableLevel},
-    ROOT_PAGE_TABLE,
-};
+use super::table::{PageEntryFlags, PageTable, PageTablePtr, TableLevel};
 use crate::{
     memory::{
         addr::{PhysAddr, VirtAddr},
-        KERNEL_PHYS_START, PAGE_SIZE,
+        PAGE_SIZE,
     },
-    println, ALLOCATOR,
+    ALLOCATOR,
 };
 
+#[derive(Clone)]
 pub struct PageTableManager {
     pub pml4: PageTablePtr,
 }
@@ -52,9 +50,9 @@ impl PageTableManager {
         // Traverse the page table hierarchy, creating tables as needed, and chain the calls.
         let mut pt = self
             .pml4
-            .next(virt, frame_alloc)
-            .and_then(|mut pdp| pdp.next(virt, frame_alloc))
-            .and_then(|mut pd| pd.next(virt, frame_alloc))
+            .next_or_create(virt, frame_alloc)
+            .and_then(|mut pdp| pdp.next_or_create(virt, frame_alloc))
+            .and_then(|mut pd| pd.next_or_create(virt, frame_alloc))
             .unwrap();
 
         // Calculate the index for the final level based on the virtual address.
@@ -73,79 +71,57 @@ impl PageTableManager {
         entry.set_flags(flags);
     }
 
-    pub unsafe fn map_page(&mut self, virt: VirtAddr, phys: PhysAddr, user: bool) {
-        // Traverse the page table hierarchy, creating tables as needed, and chain the calls.
-        let mut pt = self
-            .pml4
-            .next_table(virt)
-            .and_then(|mut pdp| pdp.next_table(virt))
-            .and_then(|mut pd| pd.next_table(virt))
-            .unwrap();
+    /// Maps a user-accessible page table entry.
+    ///
+    /// This function navigates through the page tables (PML4, PDPT, PDT) to set a specific
+    /// page table entry as user accessible. It updates the page table entries along the way
+    /// and finally sets the physical address for the given virtual address with the desired flags.
+    ///
+    /// # Arguments
+    /// * `page_table` - A mutable pointer to the PML4 page table.
+    /// * `virt_addr` - The virtual address to be mapped.
+    /// * `phys_addr` - The physical address to be mapped to the virtual address.
+    ///
+    /// # Security
+    /// This function ensures that kernel pages are not modified. It operates only on the
+    /// user-accessible portion of the address space. Kernel pages reside in the higher half
+    /// of the address space in a typical x86_64 paging scheme, and this function assumes
+    /// that `virt_addr` provided is a user-space address.
+    pub fn map_user_page(page_table: *mut PageTable, virt_addr: VirtAddr, phys_addr: PhysAddr) {
+        // Initialize the current page table pointer to the PML4 table
+        let mut current_table_ptr = PageTablePtr::new(page_table, TableLevel::PML4);
 
-        // Calculate the index for the final level based on the virtual address.
-        let index = pt.level.index(virt);
+        // Traverse through the PML4, PDPT, and PDT levels
+        for _ in (1..4).rev() {
+            let index = current_table_ptr.level.index(virt_addr);
+            let entry = unsafe { &mut (*current_table_ptr.ptr)[index] };
 
-        // Obtain a mutable reference to the final page table entry.
-        let entry = &mut pt[index];
-
-        // Set the frame address to the provided physical address and mark it as writable.
-        entry.set_frame_addr(phys.0 as usize);
-
-        let mut flags = PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE;
-        if user {
-            flags |= PageEntryFlags::USER_ACCESSIBLE;
-        }
-        entry.set_flags(flags);
-
-        println!("Mapped page: {:#x} -> {:#x}", virt.0, phys.0);
-        println!(
-            "Page {:?} -> {:#x}",
-            entry.flags(),
-            entry.get_frame_addr().unwrap()
-        );
-    }
-
-    pub fn set_user_accessible(
-        page_table: *mut PageTable,
-        virt_addr: VirtAddr,
-        phys_addr: PhysAddr,
-    ) {
-        let mut current_table = PageTablePtr::new(page_table, TableLevel::PML4);
-        let current_virt_addr = virt_addr.0;
-
-        for _level in (1..4).rev() {
-            let index = current_table.level.index(VirtAddr(current_virt_addr));
-            let entry = unsafe { &mut (*current_table.ptr)[index] };
-
+            // Set the entry to be user accessible
             entry.set_flags(entry.flags() | PageEntryFlags::USER_ACCESSIBLE);
 
-            current_table = PageTablePtr::new(
-                unsafe { &mut *(entry.get_frame_addr().unwrap() as *mut PageTable) },
-                current_table.level.next_level(),
-            )
+            // Move to the next level page table
+            current_table_ptr = unsafe { current_table_ptr.next(virt_addr) };
         }
 
-        // Set the final page entry
-        let final_index = current_table.level.index(VirtAddr(current_virt_addr));
-        let final_entry = unsafe { &mut (*current_table.ptr)[final_index] };
+        // Set the final page table entry
+        let final_index = current_table_ptr.level.index(virt_addr);
+        let final_entry = unsafe { &mut (*current_table_ptr.ptr)[final_index] };
         final_entry.set_frame_addr(phys_addr.0);
         final_entry.set_flags(
             PageEntryFlags::PRESENT | PageEntryFlags::WRITABLE | PageEntryFlags::USER_ACCESSIBLE,
         );
     }
 
-    pub unsafe fn create_address_space() -> *mut PageTable {
-        let pml4 = ALLOCATOR.alloc_page() as *mut PageTable;
-        let kernel_pml4 = ROOT_PAGE_TABLE as *mut PageTable;
-
-        let pages = (*pml4).iter_mut().zip((*kernel_pml4).iter());
-        for (new_entry, kernel_entry) in pages {
-            *new_entry = kernel_entry.clone();
-        }
-
-        pml4
-    }
-
+    /// Clones the PML4 table, including all its lower-level tables.
+    ///
+    /// # Arguments
+    /// * `src` - A pointer to the source PML4 table to be cloned.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// A pointer to the newly cloned PML4 table.
     pub unsafe fn clone_pml4(src: *mut PageTable) -> *mut PageTable {
         let page_table_manager = PageTableManager::new(src);
         let new_pml4 = page_table_manager.alloc_zeroed_page().0 as *mut PageTable;
@@ -165,6 +141,65 @@ impl PageTableManager {
         new_pml4
     }
 
+    /// Converts a virtual address to a physical address.
+    ///
+    /// This function navigates through the page tables to find the physical address
+    /// corresponding to a given virtual address.
+    ///
+    /// # Arguments
+    /// * `virt` - The virtual address to be translated.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// The physical address corresponding to the given virtual address.
+    pub unsafe fn phys_addr(&self, virt: VirtAddr) -> PhysAddr {
+        let plm4_entry = &self.pml4[TableLevel::PML4.index(virt)];
+        let pdp = plm4_entry.get_frame_addr().unwrap() as *mut PageTable;
+
+        let pdp_entry = &(*pdp)[TableLevel::PDP.index(virt)];
+        let pd = pdp_entry.get_frame_addr().unwrap() as *mut PageTable;
+
+        let pd_entry = &(*pd)[TableLevel::PD.index(virt)];
+        let pt = pd_entry.get_frame_addr().unwrap() as *mut PageTable;
+
+        let pt_entry = &(*pt)[TableLevel::PT.index(virt)];
+        PhysAddr(pt_entry.get_frame_addr().unwrap())
+    }
+
+    /// Allocates a zeroed page.
+    ///
+    /// This function allocates a new page using the heap allocator and zeroes it out.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing and assumes
+    /// the heap allocator is correctly implemented.
+    ///
+    /// # Returns
+    /// The physical address of the newly allocated zeroed page.
+    pub unsafe fn alloc_zeroed_page(&self) -> PhysAddr {
+        // Allocate a new page using the heap allocator
+        let virtual_address = ALLOCATOR.alloc_page();
+
+        // Zero out the allocated page
+        virtual_address.write_bytes(0, PAGE_SIZE);
+
+        // Convert the virtual address to a physical address
+        self.phys_addr(VirtAddr(virtual_address as usize))
+    }
+
+    /// Clones the PDPT (Page Directory Pointer Table), including all its lower-level tables.
+    ///
+    /// # Arguments
+    /// * `src` - A pointer to the source PDPT to be cloned.
+    /// * `page_table_manager` - A reference to the page table manager.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// A pointer to the newly cloned PDPT.
     unsafe fn clone_pdp(
         src: *mut PageTable,
         page_table_manager: &PageTableManager,
@@ -186,6 +221,17 @@ impl PageTableManager {
         new_pdp
     }
 
+    /// Clones the PD (Page Directory), including all its lower-level tables.
+    ///
+    /// # Arguments
+    /// * `src` - A pointer to the source PD to be cloned.
+    /// * `page_table_manager` - A reference to the page table manager.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// A pointer to the newly cloned PD.
     unsafe fn clone_pd(
         src: *mut PageTable,
         page_table_manager: &PageTableManager,
@@ -207,6 +253,17 @@ impl PageTableManager {
         new_pd
     }
 
+    /// Clones the PT (Page Table).
+    ///
+    /// # Arguments
+    /// * `src` - A pointer to the source PT to be cloned.
+    /// * `page_table_manager` - A reference to the page table manager.
+    ///
+    /// # Safety
+    /// This function is unsafe because it performs raw pointer dereferencing.
+    ///
+    /// # Returns
+    /// A pointer to the newly cloned PT.
     unsafe fn clone_pt(
         src: *mut PageTable,
         page_table_manager: &PageTableManager,
@@ -223,112 +280,5 @@ impl PageTableManager {
         }
 
         new_pt
-    }
-
-    unsafe fn alloc_zeroed_page(&self) -> PhysAddr {
-        // Allocate a new page using the heap allocator
-        let virtual_address = ALLOCATOR.alloc_page();
-
-        // Zero out the allocated page
-        virtual_address.write_bytes(0, PAGE_SIZE);
-
-        // Convert the virtual address to a physical address
-        let physical_address = self.phys_addr(VirtAddr(virtual_address as usize));
-
-        // Return the physical address
-        physical_address
-    }
-
-    pub unsafe fn phys_addr(&self, virt: VirtAddr) -> PhysAddr {
-        let plm4_entry = &self.pml4[TableLevel::PML4.index(virt)];
-        let pdp = plm4_entry.get_frame_addr().unwrap() as *mut PageTable;
-
-        let pdp_entry = &(*pdp)[TableLevel::PDP.index(virt)];
-        let pd = pdp_entry.get_frame_addr().unwrap() as *mut PageTable;
-
-        let pd_entry = &(*pd)[TableLevel::PD.index(virt)];
-        let pt = pd_entry.get_frame_addr().unwrap() as *mut PageTable;
-
-        let pt_entry = &(*pt)[TableLevel::PT.index(virt)];
-        PhysAddr(pt_entry.get_frame_addr().unwrap())
-    }
-
-    pub unsafe fn create_page_table() -> *mut PageTable {
-        let root_page_table = ROOT_PAGE_TABLE as *mut PageTable;
-        let mut page_table_manager = PageTableManager::new(root_page_table);
-        let new_page_table = ALLOCATOR.alloc_page();
-
-        let virt_addr = VirtAddr(new_page_table as usize);
-        let phys_addr = page_table_manager.phys_addr(virt_addr);
-
-        page_table_manager.map_page(virt_addr, phys_addr, true);
-
-        new_page_table as *mut PageTable
-    }
-}
-
-fn check_reserved_bits(pte: u64) -> bool {
-    // Reserved bits 52-58
-    const RESERVED_MASK: u64 = 0x007F_0000_0000_0000;
-
-    // Extract reserved bits
-    let reserved_bits = pte & RESERVED_MASK;
-
-    // Check if any reserved bits are set
-    let r = reserved_bits != 0;
-
-    if r {
-        println!("Reserved bits set: {:#x}", reserved_bits);
-    }
-
-    r
-}
-
-fn check_page_table_entries(page_table: &PageTable) {
-    for i in 0..512 {
-        let pte = page_table.entries[i];
-        if check_reserved_bits(pte.0 as u64) {
-            println!(
-                "Reserved bits set in PTE at index {}: {:#x}",
-                i, pte.0 as u64
-            );
-        }
-    }
-}
-pub fn check_all_page_tables(pml4: &PageTable) {
-    // Check PML4 entries
-    check_page_table_entries(pml4);
-
-    // Check PDPT entries
-    for i in 0..512 {
-        let pdpt_entry = pml4.entries[i];
-        if pdpt_entry.0 & 0x1 != 0 {
-            // Check if the entry is present
-            let pdpt = unsafe { &*((pdpt_entry.0 & 0x000F_FFFF_FFFF_F000) as *const PageTable) };
-            check_page_table_entries(pdpt);
-
-            // Check PD entries
-            for j in 0..512 {
-                let pd_entry = pdpt.entries[j];
-                if pd_entry.0 & 0x1 != 0 {
-                    // Check if the entry is present
-                    let pd =
-                        unsafe { &*((pd_entry.0 & 0x000F_FFFF_FFFF_F000) as *const PageTable) };
-                    check_page_table_entries(pd);
-
-                    // Check PT entries
-                    for k in 0..512 {
-                        let pt_entry = pd.entries[k];
-                        if pt_entry.0 & 0x1 != 0 {
-                            // Check if the entry is present
-                            let pt = unsafe {
-                                &*((pt_entry.0 & 0x000F_FFFF_FFFF_F000) as *const PageTable)
-                            };
-                            check_page_table_entries(pt);
-                        }
-                    }
-                }
-            }
-        }
     }
 }

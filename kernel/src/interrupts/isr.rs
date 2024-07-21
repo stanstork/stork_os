@@ -1,5 +1,3 @@
-use core::{arch::asm, fmt::Debug};
-
 use super::{idt::InterruptDescriptorTable, timer::init_timer};
 use crate::{
     cpu::io::{
@@ -7,14 +5,13 @@ use crate::{
         PIC2_DATA,
     },
     drivers::keyboard::init_keyboard,
-    memory::PAGE_SIZE,
     println,
 };
+use core::{arch::asm, fmt::Debug};
 
 // Constants for kernel code segment and IDT entry count.
 pub const KERNEL_CS: u16 = 0x08;
 pub const IDT_ENTRIES: usize = 256;
-pub const IST_SIZE: usize = 8 * PAGE_SIZE;
 
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
 #[repr(C, packed)]
@@ -37,7 +34,7 @@ pub struct InterruptStackFrameValue {
 pub static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
 
 /// Initialize the Interrupt Descriptor Table (IDT) and the Programmable Interrupt Controller (PIC).
-pub fn idt_init() {
+pub fn init() {
     println!("Initializing IDT and PIC");
 
     unsafe {
@@ -147,12 +144,6 @@ pub extern "x86-interrupt" fn page_fault_handler(
     println!("Stack pointer: {:#x}", stack_pointer);
 
     loop {}
-}
-
-unsafe fn cr2() -> u64 {
-    let value: u64;
-    asm!("mov {}, cr2", out(reg) value);
-    value
 }
 
 /// Handler for double fault exceptions.
