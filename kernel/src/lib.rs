@@ -1,23 +1,17 @@
 #![no_std] // don't link the Rust standard library
 #![no_main] // disable all Rust-level entry points
 #![feature(abi_x86_interrupt)] // enable x86 interrupts
-#![feature(ptr_internals)] // enable pointer internals
-#![feature(const_trait_impl)] // enable const trait impl
-#![feature(effects)] // enable effects
 #![feature(naked_functions)] // enable naked functions
-#![feature(ptr_metadata)] // enable pointer metadata
-#![feature(exposed_provenance)] // enable exposed provenance
-#![feature(asm_const)] // enable asm const
 #![feature(core_intrinsics)] // enable core intrinsics
-#![feature(const_mut_refs)]
-#![feature(sync_unsafe_cell)]
-#![feature(const_size_of_val)]
 
 use core::{arch::asm, panic::PanicInfo};
 use drivers::screen::display::{self};
 use interrupts::{isr, no_interrupts};
 use memory::global_allocator::GlobalAllocator;
-use process::process::Process;
+use process::{
+    process::{idle_thread, Process},
+    KERNEL_STACK_SIZE, KERNEL_STACK_START,
+};
 use structures::BootInfo;
 
 extern crate alloc;
@@ -57,10 +51,8 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
             // initialize the memory
             memory::init(boot_info);
+            tss::load_tss();
         });
-
-        interrupts::enable_interrupts();
-        tss::load_task_state_segment();
 
         test_proc();
     }
@@ -78,11 +70,7 @@ fn panic(_info: &PanicInfo) -> ! {
 pub static mut CODE_ADDR: u64 = 0;
 
 pub unsafe fn test_proc() {
-    // move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
-    process::move_stack(
-        process::KERNEL_STACK_START as *mut u8,
-        process::KERNEL_STACK_SIZE as u64,
-    );
-    let proc = Process::create_user_process();
+    process::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    let proc = Process::create_kernel_process(idle_thread);
     proc.borrow().threads[0].borrow_mut().exec();
 }

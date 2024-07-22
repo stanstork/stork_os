@@ -96,7 +96,7 @@ impl TssDescriptor {
 /// # Safety
 /// This function is unsafe because it modifies global state and interacts with
 /// CPU registers directly.
-pub unsafe fn load_task_state_segment() {
+pub unsafe fn load_tss() {
     // Allocate a stack for the kernel
     let kernel_stack = vec![0; 0x14000];
 
