@@ -9,7 +9,9 @@ use drivers::screen::display::{self};
 use interrupts::{isr, no_interrupts};
 use memory::global_allocator::GlobalAllocator;
 use process::{
-    process::{idle_thread, Process},
+    process::{Priority, Process},
+    schedule,
+    scheduler::{Scheduler, SCHEDULER},
     KERNEL_STACK_SIZE, KERNEL_STACK_START,
 };
 use structures::BootInfo;
@@ -52,6 +54,8 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             // initialize the memory
             memory::init(boot_info);
             tss::load_tss();
+
+            // test_proc();
         });
 
         test_proc();
@@ -67,10 +71,33 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-pub static mut CODE_ADDR: u64 = 0;
-
 pub unsafe fn test_proc() {
     process::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
-    let proc = Process::create_kernel_process(idle_thread);
-    proc.borrow().threads[0].borrow_mut().exec();
+
+    let proc1 = Process::create_kernel_process(test_thread1, Priority::Medium);
+    println!("Process 1 created");
+    let proc2 = Process::create_kernel_process(test_thread2, Priority::Medium);
+    println!("Process 2 created");
+
+    let mut scheduler = Scheduler::new();
+
+    scheduler.add_thread(proc1.borrow().threads[0].clone());
+    scheduler.add_thread(proc2.borrow().threads[0].clone());
+
+    SCHEDULER = Some(scheduler);
+
+    proc2.borrow().threads[0].borrow().exec();
+    // schedule();
+}
+
+extern "C" fn test_thread1() {
+    loop {
+        println!("Thread 111111 running");
+    }
+}
+
+extern "C" fn test_thread2() {
+    loop {
+        println!("Thread 222222 running");
+    }
 }

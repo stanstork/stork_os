@@ -4,9 +4,6 @@ global context_switch
 global start_thread
 
 context_switch:
-    ; Save current task state
-    ; pushfq  
-    ; pushfq
     push rax
     push rcx
     push rdx

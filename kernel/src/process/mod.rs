@@ -7,9 +7,11 @@ use crate::{
     ALLOCATOR, INITIAL_RSP,
 };
 use core::{arch::asm, ptr::copy_nonoverlapping};
+use scheduler::SCHEDULER;
 
 pub(crate) mod id;
 pub(crate) mod process;
+pub(crate) mod scheduler;
 
 pub const KERNEL_STACK_SIZE: usize = 0x2000; // 8 KB
 pub const KERNEL_STACK_START: u64 = 0x000700000000000; // 128 TB
@@ -94,5 +96,11 @@ pub unsafe fn move_stack(new_stack_start: *mut u8, size: u64) {
         // Switch to the new stack.
         asm!("mov rsp, {}", in(reg) new_stack_pointer);
         asm!("mov rbp, {}", in(reg) new_base_pointer);
+    }
+}
+
+pub fn schedule() {
+    unsafe {
+        SCHEDULER.as_mut().unwrap().schedule();
     }
 }

@@ -13,6 +13,7 @@ use crate::{
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::{
+    alloc::Layout,
     cell::RefCell,
     intrinsics::size_of,
     ptr::{self, copy_nonoverlapping},
@@ -60,10 +61,28 @@ pub struct Process {
     pub threads: Vec<Rc<RefCell<Thread>>>,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum Priority {
+    High = 0,
+    Medium = 1,
+    Low = 2,
+    Idle = 3,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ThreadStatus {
+    Ready,
+    Running,
+    Blocked,
+    Terminated,
+}
+
 pub struct Thread {
     pub tid: Tid,
     pub process: Rc<RefCell<Process>>,
     pub stack_pointer: u64,
+    pub priority: Priority,
+    pub status: ThreadStatus,
 }
 
 pub struct Stack {
@@ -90,11 +109,6 @@ impl Stack {
     }
 }
 
-pub extern "C" fn idle_thread() {
-    println!("Idle thread running");
-    loop {}
-}
-
 extern "C" {
     fn start_thread(stack_pointer: u64);
 }
@@ -108,12 +122,21 @@ impl Process {
         }
     }
 
-    pub fn create_kernel_process(func: extern "C" fn()) -> Rc<RefCell<Process>> {
+    pub fn create_kernel_process(
+        func: extern "C" fn(),
+        priority: Priority,
+    ) -> Rc<RefCell<Process>> {
         let process = Rc::new(RefCell::new(Process::new()));
         let thread = Thread::create_thread(
             func as *const usize,
             process.clone(),
             PrivilegeLevel::Kernel,
+            priority,
+        );
+
+        println!(
+            "Thread created with stack pointer: {:#x}",
+            thread.stack_pointer
         );
 
         process
@@ -124,9 +147,9 @@ impl Process {
         process
     }
 
-    pub fn create_user_process() -> Rc<RefCell<Process>> {
+    pub fn create_user_process(priority: Priority) -> Rc<RefCell<Process>> {
         let process = Rc::new(RefCell::new(Process::new()));
-        let thread = Thread::create_user_thread(process.clone());
+        let thread = Thread::create_user_thread(process.clone(), priority);
 
         process
             .borrow_mut()
@@ -142,6 +165,7 @@ impl Thread {
         entry_point: *const usize,
         process: Rc<RefCell<Process>>,
         privilege_level: PrivilegeLevel,
+        priority: Priority,
     ) -> Self {
         let (cs, ss) = match privilege_level {
             PrivilegeLevel::Kernel => (KERNEL_CODE_SEGMENT, KERNEL_DATA_SEGMENT),
@@ -157,11 +181,13 @@ impl Thread {
                 tid: Tid::next(),
                 process,
                 stack_pointer: registers as u64,
+                priority,
+                status: ThreadStatus::Ready,
             }
         }
     }
 
-    pub fn create_user_thread(process: Rc<RefCell<Process>>) -> Self {
+    pub fn create_user_thread(process: Rc<RefCell<Process>>, priority: Priority) -> Self {
         let entry_point = unsafe {
             let code = INFINITE_LOOP.as_ptr() as *const usize;
             let size = INFINITE_LOOP.len();
@@ -170,7 +196,12 @@ impl Thread {
 
         println!("Entry point: {:#x}", entry_point);
 
-        Self::create_thread(entry_point as *const usize, process, PrivilegeLevel::User)
+        Self::create_thread(
+            entry_point as *const usize,
+            process,
+            PrivilegeLevel::User,
+            priority,
+        )
     }
 
     pub fn exec(&self) {
@@ -206,24 +237,83 @@ impl Thread {
         virt_addr as usize
     }
 
-    unsafe fn create_stack_frame(cs: u64, ss: u64, rip: u64) -> *mut Registers {
-        let stack = Stack::new();
-        let mut stack_top = stack.top();
+    unsafe fn create_stack_frame(cs: u64, ss: u64, rip: u64) -> *mut u64 {
+        let stack = unsafe { ALLOCATOR.alloc_page() };
+        let mut stack_top = unsafe { stack.add(STACK_SIZE) } as *mut u64;
 
-        *stack_top = 0xDEADBEEFu64; // Dummy value to help with debugging
-        stack_top = stack_top.offset(-1);
+        unsafe {
+            stack_top = stack_top.offset(-1);
+            *stack_top = ss; // ss
+            stack_top = stack_top.offset(-1);
+            *stack_top = stack_top as u64; // rsp (user stack pointer)
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0x202; // rflags
+            stack_top = stack_top.offset(-1);
+            *stack_top = cs; // cs
+            stack_top = stack_top.offset(-1);
+            *stack_top = rip as u64; // rip
 
-        let registers = (stack_top as usize - size_of::<Registers>()) as *mut Registers;
+            // Push general-purpose registers in reverse order
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rax
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rcx
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rdx
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rbx
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rbp
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rsi
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // rdi
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r8
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r9
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r10
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r11
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r12
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r13
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r14
+            stack_top = stack_top.offset(-1);
+            *stack_top = 0; // r15
 
-        (*registers).rip = rip;
-        (*registers).rsp = stack_top as u64;
-        (*registers).cs = cs;
-        (*registers).ss = ss;
-        (*registers).rflags = 0x202;
+            // Align stack to 16 bytes
+            // stack_top = (stack_top as usize & !0xF) as *mut u64;
+            stack_top = (stack_top as usize & !0xF) as *mut u64;
 
-        print_stack(stack.stack_ptr, STACK_SIZE);
+            print_stack(stack, STACK_SIZE);
+        }
 
-        registers
+        stack_top
+        // println!("Creating stack frame for thread");
+
+        // let stack = Stack::new();
+        // let mut stack_top = stack.top();
+
+        // println!("Stack top: {:#x}", stack_top as u64);
+
+        // *stack_top = 0xDEADBEEFu64; // Dummy value to help with debugging
+        // stack_top = stack_top.offset(-1);
+
+        // let registers = (stack_top as usize - size_of::<Registers>()) as *mut Registers;
+
+        // (*registers).rip = rip;
+        // (*registers).rsp = stack_top as u64;
+        // (*registers).cs = cs;
+        // (*registers).ss = ss;
+        // (*registers).rflags = 0x202;
+
+        // print_stack(stack.stack_ptr, STACK_SIZE);
+
+        // registers
     }
 }
 
