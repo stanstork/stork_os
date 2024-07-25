@@ -20,7 +20,7 @@ pub struct Display {
 }
 
 // The static mutable DISPLAY variable is used to store the display state.
-static mut DISPLAY: Display = Display::default();
+pub static mut DISPLAY: Display = Display::default();
 
 impl Display {
     /// Creates a new Display struct with all fields set to 0.
@@ -180,6 +180,20 @@ impl Display {
             DISPLAY.console.cursor.1 -= 1;
         } else {
             DISPLAY.console.cursor.1 = 0;
+        }
+    }
+
+    pub unsafe fn write_at_position(&self, x: usize, y: usize, color: u32) {
+        let index = y * self.backbuffer.pixels_per_scanline as usize + x;
+        self.backbuffer.write_pixel(index, color);
+    }
+
+    pub unsafe fn draw_square(&self, x: usize, y: usize, size: usize, color: u32) {
+        for dy in 0..size {
+            for dx in 0..size {
+                let index = (y + dy) * self.backbuffer.pixels_per_scanline as usize + (x + dx);
+                self.backbuffer.write_pixel(index, color);
+            }
         }
     }
 }

@@ -12,6 +12,8 @@ use scheduler::SCHEDULER;
 pub(crate) mod id;
 pub(crate) mod process;
 pub(crate) mod scheduler;
+pub(crate) mod spin;
+pub(crate) mod switch;
 
 pub const KERNEL_STACK_SIZE: usize = 0x2000; // 8 KB
 pub const KERNEL_STACK_START: u64 = 0x000700000000000; // 128 TB
@@ -101,6 +103,8 @@ pub unsafe fn move_stack(new_stack_start: *mut u8, size: u64) {
 
 pub fn schedule() {
     unsafe {
-        SCHEDULER.as_mut().unwrap().schedule();
+        if let Some(scheduler) = SCHEDULER.as_mut() {
+            scheduler.schedule();
+        }
     }
 }

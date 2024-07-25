@@ -3,13 +3,14 @@
 #![feature(abi_x86_interrupt)] // enable x86 interrupts
 #![feature(naked_functions)] // enable naked functions
 #![feature(core_intrinsics)] // enable core intrinsics
+#![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 
 use core::{arch::asm, panic::PanicInfo};
-use drivers::screen::display::{self};
+use drivers::screen::display::{self, DISPLAY};
 use interrupts::{isr, no_interrupts};
 use memory::global_allocator::GlobalAllocator;
 use process::{
-    process::{Priority, Process},
+    process::{task_a, task_b, Priority, Process},
     schedule,
     scheduler::{Scheduler, SCHEDULER},
     KERNEL_STACK_SIZE, KERNEL_STACK_START,
@@ -81,23 +82,51 @@ pub unsafe fn test_proc() {
 
     let mut scheduler = Scheduler::new();
 
-    scheduler.add_thread(proc1.borrow().threads[0].clone());
-    scheduler.add_thread(proc2.borrow().threads[0].clone());
+    scheduler.add_thread(proc1.borrow().threads[0].borrow().clone());
+    scheduler.add_thread(proc2.borrow().threads[0].borrow().clone());
 
     SCHEDULER = Some(scheduler);
 
-    proc2.borrow().threads[0].borrow().exec();
+    // proc2.borrow().threads[0].borrow().exec();
     // schedule();
 }
 
 extern "C" fn test_thread1() {
+    let color_on: u32 = 0xFF00FF00; // Green color
+    let color_off: u32 = 0xFFFFFFFF; // White color
+    let size: usize = 50;
     loop {
-        println!("Thread 111111 running");
+        unsafe {
+            DISPLAY.draw_square(0, 0, size, color_on);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+            DISPLAY.draw_square(0, 0, size, color_off);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+        }
     }
 }
 
 extern "C" fn test_thread2() {
+    let color_on: u32 = 0xFFFF0000; // Red color
+    let color_off: u32 = 0xFF0000FF; // Blue color
+    let size: usize = 50;
     loop {
-        println!("Thread 222222 running");
+        unsafe {
+            DISPLAY.draw_square(0, 105, size, color_on);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+            DISPLAY.draw_square(0, 105, size, color_off);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+        }
     }
 }

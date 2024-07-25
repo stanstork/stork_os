@@ -31,7 +31,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
 
     // Send EOI signal to the PIC.
     pic_end_master();
-    // schedule();
+    schedule();
 }
 
 pub fn init_timer() {

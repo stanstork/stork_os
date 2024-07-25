@@ -4,6 +4,7 @@ global context_switch
 global start_thread
 
 context_switch:
+    pushfq
     push rax
     push rcx
     push rdx
@@ -44,9 +45,9 @@ context_switch:
     pop rdx
     pop rcx
     pop rax
-    ; popfq
+    popfq
 
-	iretq
+	ret
 
 start_thread:
     ; Load the stack pointer from the argument (rdi)

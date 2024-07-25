@@ -40,13 +40,13 @@ pub struct Registers {
     r10: u64,
     r9: u64,
     r8: u64,
-    rsi: u64,
+    rbp: u64,
     rdi: u64,
+    rsi: u64,
     rdx: u64,
     rcx: u64,
     rbx: u64,
     rax: u64,
-    rbp: u64,
     rip: u64,
     cs: u64,
     rflags: u64,
@@ -77,6 +77,7 @@ pub enum ThreadStatus {
     Terminated,
 }
 
+#[derive(Clone)]
 pub struct Thread {
     pub tid: Tid,
     pub process: Rc<RefCell<Process>>,
@@ -238,82 +239,23 @@ impl Thread {
     }
 
     unsafe fn create_stack_frame(cs: u64, ss: u64, rip: u64) -> *mut u64 {
-        let stack = unsafe { ALLOCATOR.alloc_page() };
-        let mut stack_top = unsafe { stack.add(STACK_SIZE) } as *mut u64;
+        let stack = ALLOCATOR.alloc_page();
+        let stack_top = (stack.add(STACK_SIZE)) as *mut u64;
+        let stack_top = stack_top.sub(size_of::<Registers>());
+
+        let cpu_state = stack_top as *mut Registers;
 
         unsafe {
-            stack_top = stack_top.offset(-1);
-            *stack_top = ss; // ss
-            stack_top = stack_top.offset(-1);
-            *stack_top = stack_top as u64; // rsp (user stack pointer)
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0x202; // rflags
-            stack_top = stack_top.offset(-1);
-            *stack_top = cs; // cs
-            stack_top = stack_top.offset(-1);
-            *stack_top = rip as u64; // rip
+            (*cpu_state).rip = rip;
+            (*cpu_state).cs = cs;
+            (*cpu_state).rflags = 0x202;
+            (*cpu_state).rsp = stack_top as u64;
+            (*cpu_state).ss = ss;
 
-            // Push general-purpose registers in reverse order
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rax
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rcx
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rdx
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rbx
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rbp
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rsi
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // rdi
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r8
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r9
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r10
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r11
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r12
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r13
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r14
-            stack_top = stack_top.offset(-1);
-            *stack_top = 0; // r15
-
-            // Align stack to 16 bytes
-            // stack_top = (stack_top as usize & !0xF) as *mut u64;
-            stack_top = (stack_top as usize & !0xF) as *mut u64;
-
-            print_stack(stack, STACK_SIZE);
+            print_stack(stack_top as *mut u8, STACK_SIZE);
         }
 
         stack_top
-        // println!("Creating stack frame for thread");
-
-        // let stack = Stack::new();
-        // let mut stack_top = stack.top();
-
-        // println!("Stack top: {:#x}", stack_top as u64);
-
-        // *stack_top = 0xDEADBEEFu64; // Dummy value to help with debugging
-        // stack_top = stack_top.offset(-1);
-
-        // let registers = (stack_top as usize - size_of::<Registers>()) as *mut Registers;
-
-        // (*registers).rip = rip;
-        // (*registers).rsp = stack_top as u64;
-        // (*registers).cs = cs;
-        // (*registers).ss = ss;
-        // (*registers).rflags = 0x202;
-
-        // print_stack(stack.stack_ptr, STACK_SIZE);
-
-        // registers
     }
 }
 
@@ -333,4 +275,43 @@ fn print_stack(stack: *mut u8, stack_size: usize) {
         }
         println!();
     }
+}
+
+//EXAMPLE TASKS
+pub extern "C" fn task_a() {
+    let mut a: u32 = 0;
+    let mut b: u8 = 0;
+    loop {
+        if a == 100_000_000 {
+            println!("Process A running. {}% complete.", b);
+            a = 0;
+            b += 1;
+
+            if b == 100 {
+                println!("Process A complete.");
+                break;
+            }
+        }
+        a += 1;
+    }
+    loop {}
+}
+
+pub extern "C" fn task_b() {
+    let mut a: u32 = 0;
+    let mut b: u8 = 0;
+    loop {
+        if a == 100_000_000 {
+            println!("Process B running. {}% complete.", b);
+            a = 0;
+            b += 1;
+
+            if b == 100 {
+                println!("Process B complete.");
+                break;
+            }
+        }
+        a += 1;
+    }
+    loop {}
 }
