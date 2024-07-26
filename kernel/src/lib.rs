@@ -28,6 +28,7 @@ mod memory;
 mod process;
 mod registers;
 mod structures;
+mod sync;
 mod tss;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
