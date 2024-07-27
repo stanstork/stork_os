@@ -5,6 +5,7 @@
 #![feature(core_intrinsics)] // enable core intrinsics
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 
+use acpi::rsdp;
 use core::{arch::asm, panic::PanicInfo};
 use drivers::screen::display::{self, DISPLAY};
 use interrupts::{isr, no_interrupts};
@@ -19,6 +20,7 @@ use tasks::{
 
 extern crate alloc;
 
+mod acpi;
 mod cpu;
 mod data_types;
 mod drivers;
@@ -58,6 +60,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             tss::load_tss();
         });
 
+        rsdp::init_rsdp(boot_info);
         test_proc();
     }
 

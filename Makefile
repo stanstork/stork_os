@@ -9,14 +9,17 @@ DISK_IMG          := ${BUILD_DIR}/kernel.img
 DISK_IMG_SIZE     := 2880
 
 QEMU_FLAGS :=                                                \
-	-bios ovmf                                            \
-	-drive if=none,id=uas-disk1,file=${DISK_IMG},format=raw    \
-	-device usb-storage,drive=uas-disk1                        \
-	-serial stdio                                              \
-	-usb                                                       \
-	-net none                                                  \
-	-vga std \
-	-d int
+	-bios ${BOOTLOADER_DIR}/OVMF_CODE-pure-efi.fd                                            \
+    -drive if=none,id=uas-disk1,file=${DISK_IMG},format=raw    \
+    -device usb-storage,drive=uas-disk1                        \
+    -serial stdio                                              \
+    -usb                                                       \
+    -net none                                                  \
+    -machine type=q35,accel=kvm                                \
+    -cpu host                                                  \
+    -m 1G                                                      \
+    -smp cores=4,threads=1,sockets=1                           \
+    -d int
 
 .PHONY: all clean emu
 
@@ -39,7 +42,7 @@ kernel: ${KERNEL_BINARY}
 ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} 
 	# Create UEFI boot disk image in DOS format.
 	dd if=/dev/zero of=${DISK_IMG} bs=512 count=93750
-	mformat -i ${DISK_IMG} ::
+	mformat -i ${DISK_IMG} -F ::
 	mmd -i ${DISK_IMG} ::/EFI
 	mmd -i ${DISK_IMG} ::/EFI/BOOT
 	# Copy the bootloader to the boot partition.

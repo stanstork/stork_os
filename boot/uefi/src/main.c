@@ -3,7 +3,7 @@
 #include <elf.h>
 
 // Define constants for the target screen width, height, and pixel format.
-#define TARGET_SCREEN_WIDTH 1024
+#define TARGET_SCREEN_WIDTH 1360
 #define TARGET_SCREEN_HEIGHT 768
 #define TARGET_PIXEL_FORMAT PixelBlueGreenRedReserved8BitPerColor
 
@@ -40,6 +40,7 @@ typedef struct
     Framebuffer framebuffer;           // Framebuffer information for the display.
     PSF1_FONT font;                    // Pointer to the loaded PSF1 font.
     UINT64 kernel_end;                 // The end address of the kernel.
+    void *rsdp;                        // Pointer to the RSDP ACPI table.
 } Boot_Info;
 
 // Global variable to hold the handle buffer for graphics protocols.
@@ -50,6 +51,25 @@ EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs_protocol;
 
 // Global variable to hold the kernel end address.
 UINT64 kernel_end;
+
+// Ensure you have the correct GUID for ACPI 2.0 Table
+EFI_GUID Acpi2TableGuid = ACPI_20_TABLE_GUID;
+
+// Simple implementation of memcmp using EFI types
+INTN compareMemory(CONST VOID *dstBuffer, CONST VOID *srcBuffer, UINTN n)
+{
+    CONST UINT8 *dest = dstBuffer;
+    CONST UINT8 *src = srcBuffer;
+
+    for (UINTN i = 0; i < n; i++)
+    {
+        if (dest[i] != src[i])
+        {
+            return dest[i] - src[i];
+        }
+    }
+    return 0;
+}
 
 /**
  * load_segment - Loads a segment of a kernel image into memory.
@@ -609,6 +629,8 @@ EFI_STATUS find_video_mode(IN EFI_GRAPHICS_OUTPUT_PROTOCOL *const protocol,
             return status;
         }
 
+        Print(L"Mode %d: %dx%d, Pixel Format: %d\n", i, mode_info->HorizontalResolution, mode_info->VerticalResolution, mode_info->PixelFormat);
+
         // Check if the current mode matches the target parameters.
         if (mode_info->HorizontalResolution == target_width &&
             mode_info->VerticalResolution == target_height &&
@@ -616,12 +638,12 @@ EFI_STATUS find_video_mode(IN EFI_GRAPHICS_OUTPUT_PROTOCOL *const protocol,
         {
             // If a match is found, store the index of the mode and return success.
             *video_mode = i;
-            return EFI_SUCCESS;
+            // return EFI_SUCCESS;
         }
     }
 
     // If no matching mode is found, return an error.
-    return EFI_UNSUPPORTED;
+    return EFI_SUCCESS;
 }
 
 /**
@@ -804,6 +826,28 @@ PSF1_FONT *load_ps1_font(EFI_FILE *root_file_system, EFI_FILE *directory, CHAR16
     return font;
 }
 
+void *find_rsdp(EFI_SYSTEM_TABLE *SystemTable)
+{
+    EFI_CONFIGURATION_TABLE *configTable = SystemTable->ConfigurationTable;
+    void *rsdp = NULL;
+
+    Print(L"Searching for RSDP\n");
+
+    for (UINTN index = 0; index < SystemTable->NumberOfTableEntries; index++)
+    {
+        if (CompareGuid(&configTable[index].VendorGuid, &Acpi2TableGuid))
+        {
+            // Correct the pointer dereference to access VendorTable
+            if (compareMemory((CHAR8 *)configTable[index].VendorTable, "RSD PTR ", 8) == 0)
+            {
+                rsdp = configTable[index].VendorTable;
+                break;
+            }
+        }
+    }
+    return rsdp;
+}
+
 /**
  * efi_main - The entry point for the UEFI application.
  *
@@ -832,8 +876,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle,
     UINTN memory_map_size = 0;                                     // Memory map size.
     UINTN descriptor_size;                                         // Size of an individual memory descriptor.
     UINT32 descriptor_version;                                     // Memory descriptor version.
-    void (*kernel_entry)(Boot_Info *boot_info);                    // Kernel entry function pointer.
-    Boot_Info boot_info;                                           // Boot information structure.
+    // void *rsdp = NULL;                                             // Root System Description Pointer.
+    void (*kernel_entry)(Boot_Info *boot_info); // Kernel entry function pointer.
+    Boot_Info boot_info;                        // Boot information structure.
 
     fs_protocol = NULL;
 
@@ -908,6 +953,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle,
 
     Print(L"Set Kernel Entry Point to: '0x%llx'\n", *kernel_entry_point);
 
+    void *rsdp = find_rsdp(SystemTable);
+    if (rsdp == NULL)
+    {
+        Print(L"Error: Failed to find RSDP\n");
+        return EFI_LOAD_ERROR;
+    }
+
     PSF1_FONT *font = load_ps1_font(root_file_system, NULL, L"\\zap-light16.psf", ImageHandle, SystemTable);
     if (font == NULL)
     {
@@ -926,6 +978,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle,
     boot_info.framebuffer.pixels_per_scanline =
         graphics_output_protocol->Mode->Info->PixelsPerScanLine;
     boot_info.font = *font;
+    boot_info.rsdp = rsdp;
     boot_info.kernel_end = kernel_end;
 
     Print(L"Freeing GOP handle buffer\n");
