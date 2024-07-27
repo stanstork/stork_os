@@ -3,16 +3,19 @@
 #![feature(abi_x86_interrupt)] // enable x86 interrupts
 #![feature(naked_functions)] // enable naked functions
 #![feature(core_intrinsics)] // enable core intrinsics
+#![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 
 use core::{arch::asm, panic::PanicInfo};
-use drivers::screen::display::{self};
+use drivers::screen::display::{self, DISPLAY};
 use interrupts::{isr, no_interrupts};
 use memory::global_allocator::GlobalAllocator;
-use process::{
-    process::{idle_thread, Process},
+use structures::BootInfo;
+use tasks::{
+    process::Process,
+    scheduler::{Scheduler, SCHEDULER},
+    thread::Priority,
     KERNEL_STACK_SIZE, KERNEL_STACK_START,
 };
-use structures::BootInfo;
 
 extern crate alloc;
 
@@ -22,9 +25,10 @@ mod drivers;
 mod gdt;
 mod interrupts;
 mod memory;
-mod process;
 mod registers;
 mod structures;
+mod sync;
+mod tasks;
 mod tss;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
@@ -67,10 +71,58 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-pub static mut CODE_ADDR: u64 = 0;
-
 pub unsafe fn test_proc() {
-    process::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
-    let proc = Process::create_kernel_process(idle_thread);
-    proc.borrow().threads[0].borrow_mut().exec();
+    tasks::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+
+    let proc1 = Process::create_kernel_process(test_thread1, Priority::Medium);
+    println!("Process 1 created");
+    let proc2 = Process::create_kernel_process(test_thread2, Priority::Medium);
+    println!("Process 2 created");
+
+    let mut scheduler = Scheduler::new();
+
+    scheduler.add_thread(proc1.borrow().threads[0].borrow().clone());
+    scheduler.add_thread(proc2.borrow().threads[0].borrow().clone());
+
+    SCHEDULER = Some(scheduler);
+}
+
+extern "C" fn test_thread1() {
+    let color_on: u32 = 0xFF00FF00; // Green color
+    let color_off: u32 = 0xFFFFFFFF; // White color
+    let size: usize = 50;
+    loop {
+        unsafe {
+            DISPLAY.draw_square(0, 0, size, color_on);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+            DISPLAY.draw_square(0, 0, size, color_off);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+        }
+    }
+}
+
+extern "C" fn test_thread2() {
+    let color_on: u32 = 0xFFFF0000; // Red color
+    let color_off: u32 = 0xFF0000FF; // Blue color
+    let size: usize = 50;
+    loop {
+        unsafe {
+            DISPLAY.draw_square(0, 105, size, color_on);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+            DISPLAY.draw_square(0, 105, size, color_off);
+            // Simulate some work
+            for _ in 0..100_000 {
+                asm!("nop");
+            }
+        }
+    }
 }

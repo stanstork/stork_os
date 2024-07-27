@@ -11,29 +11,29 @@ struct Console {
 }
 
 pub struct Display {
-    framebuffer: &'static Framebuffer, // Framebuffer for the display.
-    backbuffer: Framebuffer,           // Backbuffer for the display.
-    font: &'static PSF1Font,           // Font for the display.
-    console: Console,                  // Console for the display.
-    char_width: usize,                 // Width of each character in the font.
-    char_height: usize,                // Height of each character in the font.
+    framebuffer: Framebuffer, // Framebuffer for the display.
+    backbuffer: Framebuffer,  // Backbuffer for the display.
+    font: &'static PSF1Font,  // Font for the display.
+    console: Console,         // Console for the display.
+    char_width: usize,        // Width of each character in the font.
+    char_height: usize,       // Height of each character in the font.
 }
 
 // The static mutable DISPLAY variable is used to store the display state.
-static mut DISPLAY: Display = Display::default();
+pub static mut DISPLAY: Display = Display::default();
 
 impl Display {
     /// Creates a new Display struct with all fields set to 0.
     pub const fn default() -> Display {
         Display {
-            framebuffer: &Framebuffer {
-                pointer: 0 as *mut u32,
+            framebuffer: Framebuffer {
+                pointer: core::ptr::NonNull::dangling(),
                 width: 0,
                 height: 0,
                 pixels_per_scanline: 0,
             },
             backbuffer: Framebuffer {
-                pointer: 0 as *mut u32,
+                pointer: core::ptr::NonNull::dangling(),
                 width: 0,
                 height: 0,
                 pixels_per_scanline: 0,
@@ -61,7 +61,7 @@ impl Display {
     /// Clears the screen by writing spaces to every position in the framebuffer memory.
     pub unsafe fn clear_screen(&mut self) {
         let clear_char = 0xFF000000; // Black space character to clear with
-        let address = self.backbuffer.pointer as *mut u32;
+        let address = self.backbuffer.pointer.as_ptr();
 
         for i in 0..(self.backbuffer.width * self.backbuffer.height) {
             *address.add(i as usize) = clear_char;
@@ -107,7 +107,7 @@ impl Display {
     /// Puts a character at a specific position on the display.
     unsafe fn put_char_at(x_off: usize, y_off: usize, char: char) {
         // Get the pointer to the backbuffer where pixels are drawn
-        let address = DISPLAY.backbuffer.pointer as *mut u32;
+        let address = DISPLAY.backbuffer.pointer.as_ptr();
 
         // Get the width and height of each character
         let char_width = DISPLAY.char_width;
@@ -147,7 +147,7 @@ impl Display {
     /// Scrolls the display up by one line.
     unsafe fn scroll_up() {
         // Get the pointer to the backbuffer where pixels are drawn
-        let address = DISPLAY.backbuffer.pointer as *mut u32;
+        let address = DISPLAY.backbuffer.pointer.as_ptr();
 
         let width = DISPLAY.backbuffer.width as usize;
         let height = DISPLAY.backbuffer.height as usize;
@@ -182,12 +182,26 @@ impl Display {
             DISPLAY.console.cursor.1 = 0;
         }
     }
+
+    pub unsafe fn write_at_position(&self, x: usize, y: usize, color: u32) {
+        let index = y * self.backbuffer.pixels_per_scanline as usize + x;
+        self.backbuffer.write_pixel(index, color);
+    }
+
+    pub unsafe fn draw_square(&self, x: usize, y: usize, size: usize, color: u32) {
+        for dy in 0..size {
+            for dx in 0..size {
+                let index = (y + dy) * self.backbuffer.pixels_per_scanline as usize + (x + dx);
+                self.backbuffer.write_pixel(index, color);
+            }
+        }
+    }
 }
 
 /// Initializes the display with the given framebuffer and font.
 pub fn init(framebuffer: &'static Framebuffer, font: &'static PSF1Font) {
     let backbuffer = Framebuffer {
-        pointer: framebuffer.pointer as *mut u32,
+        pointer: framebuffer.pointer,
         width: framebuffer.width,
         height: framebuffer.height,
         pixels_per_scanline: framebuffer.pixels_per_scanline,
@@ -195,7 +209,7 @@ pub fn init(framebuffer: &'static Framebuffer, font: &'static PSF1Font) {
 
     unsafe {
         DISPLAY = Display {
-            framebuffer,
+            framebuffer: framebuffer.clone(),
             backbuffer,
             font,
             console: Console {

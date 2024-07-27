@@ -7,9 +7,13 @@ use crate::{
     ALLOCATOR, INITIAL_RSP,
 };
 use core::{arch::asm, ptr::copy_nonoverlapping};
+use scheduler::SCHEDULER;
 
 pub(crate) mod id;
 pub(crate) mod process;
+pub(crate) mod scheduler;
+pub(crate) mod switch;
+pub(crate) mod thread;
 
 pub const KERNEL_STACK_SIZE: usize = 0x2000; // 8 KB
 pub const KERNEL_STACK_START: u64 = 0x000700000000000; // 128 TB
@@ -94,5 +98,54 @@ pub unsafe fn move_stack(new_stack_start: *mut u8, size: u64) {
         // Switch to the new stack.
         asm!("mov rsp, {}", in(reg) new_stack_pointer);
         asm!("mov rbp, {}", in(reg) new_base_pointer);
+    }
+}
+
+/// Schedules the next thread to run by invoking the scheduler's `schedule` method.
+///
+/// This function checks if the global `SCHEDULER` is initialized. If it is, it
+/// calls the `schedule` method on the scheduler to perform a context switch to the next thread.
+///
+/// # Safety
+///
+/// This function is unsafe because it directly manipulates global state and
+/// performs a context switch, which can have side effects on the entire system.
+pub fn schedule() {
+    unsafe {
+        // Check if the global SCHEDULER is initialized
+        if let Some(scheduler) = SCHEDULER.as_mut() {
+            // Call the schedule method to perform a context switch
+            scheduler.schedule();
+        }
+    }
+}
+
+/// Retrieves the current page table pointer for the running thread.
+///
+/// This function checks if the global `SCHEDULER` is initialized. If it is, it
+/// retrieves the page table pointer for the currently running thread and returns it as an `Option<u64>`.
+///
+/// # Returns
+///
+/// An `Option<u64>` containing the current page table pointer if the scheduler is initialized, otherwise `None`.
+///
+/// # Safety
+///
+/// This function is unsafe because it directly manipulates global state and
+/// accesses the page table pointer of the currently running thread.
+pub fn get_current_page_table() -> Option<u64> {
+    unsafe {
+        // Check if the global SCHEDULER is initialized
+        if let Some(scheduler) = SCHEDULER.as_mut() {
+            // Retrieve the current thread's page table pointer
+            let page_table = scheduler
+                .get_current_thread() // Get the current thread
+                .lock() // Lock the thread for safe access
+                .process // Access the associated process
+                .borrow() // Borrow the process for access
+                .page_table as u64; // Get the page table pointer as u64
+            return Some(page_table);
+        }
+        None
     }
 }
