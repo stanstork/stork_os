@@ -135,7 +135,7 @@ impl Thread {
             Self::map_user_memory(process.borrow().page_table, code, size)
         };
 
-        println!("Entry point: {:#x}", entry_point);
+        // println!("Entry point: {:#x}", entry_point);
 
         Self::new(
             entry_point as *const usize,
@@ -218,7 +218,7 @@ impl Thread {
             (*state).rsp = stack_top as u64; // Set the stack pointer to the top of the stack
             (*state).ss = ss; // Set the stack segment selector
 
-            print_stack(stack_top as *mut u8, 256);
+            // print_stack(stack_top as *mut u8, 256);
         }
 
         stack_top // Return the top of the stack

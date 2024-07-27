@@ -1,7 +1,6 @@
-use core::intrinsics::size_of;
-
 use super::sdt::SdtHeader;
-use crate::{println, structures::BootInfo};
+use crate::{acpi::fadt::Fadt, println, structures::BootInfo};
+use core::intrinsics::size_of;
 
 /// Root System Description Pointer (RSDP) structure.
 /// The RSDP is a structure that is used to locate the Root System Description Table (RSDT)
@@ -29,10 +28,33 @@ pub struct Rsdp {
     pub reserved: [u8; 3],
 }
 
+pub struct StdHeaders {
+    pub facp: Option<u64>,
+    pub apic: Option<u64>,
+    pub hpet: Option<u64>,
+    pub mcfg: Option<u64>,
+    pub waet: Option<u64>,
+    pub bgrt: Option<u64>,
+}
+
+impl Default for StdHeaders {
+    fn default() -> Self {
+        StdHeaders {
+            facp: None,
+            apic: None,
+            hpet: None,
+            mcfg: None,
+            waet: None,
+            bgrt: None,
+        }
+    }
+}
+
 pub struct RsdpManager {
     pub rsdp: *const Rsdp,
     pub rsdt: *const SdtHeader,
     pub entry_count: usize,
+    pub sdt_headers: StdHeaders,
 }
 
 impl RsdpManager {
@@ -44,10 +66,11 @@ impl RsdpManager {
             rsdp,
             rsdt,
             entry_count,
+            sdt_headers: StdHeaders::default(),
         }
     }
 
-    pub fn get_entry(&self, index: usize) -> Option<&SdtHeader> {
+    pub fn get_entry(&self, index: usize) -> Option<*const SdtHeader> {
         if index < self.entry_count {
             let entries_base =
                 unsafe { (self.rsdt as *const u8).add(size_of::<SdtHeader>()) } as *const u32;
@@ -55,6 +78,19 @@ impl RsdpManager {
             unsafe { Some(&*entry_address) }
         } else {
             None
+        }
+    }
+
+    pub fn add_sdt_header(&mut self, header: *const SdtHeader) {
+        let signature = core::str::from_utf8(unsafe { &(*header).signature }).unwrap();
+        match signature {
+            "FACP" => self.sdt_headers.facp = Some(header as u64),
+            "APIC" => self.sdt_headers.apic = Some(header as u64),
+            "HPET" => self.sdt_headers.hpet = Some(header as u64),
+            "MCFG" => self.sdt_headers.mcfg = Some(header as u64),
+            "WAET" => self.sdt_headers.waet = Some(header as u64),
+            "BGRT" => self.sdt_headers.bgrt = Some(header as u64),
+            _ => {}
         }
     }
 }
@@ -82,13 +118,69 @@ impl Rsdp {
     }
 }
 
+/// Initializes and processes the RSDP (Root System Description Pointer).
+///
+/// This function validates the checksum of the RSDP, prints its details,
+/// and initializes the RSDP manager to handle the ACPI tables. It then
+/// retrieves the Fixed ACPI Description Table (FADT) and enables ACPI.
+///
+/// ACPI Table Locations in BIOS:
+///
+/// ACPI tables are located in specific regions of memory, defined by the system firmware.
+///
+/// 1. **RSDP (Root System Description Pointer)**:
+///    - **Location**: Typically found in the first 1KB of the Extended BIOS Data Area (EBDA),
+///      in the last 128KB of the system's main memory (below 1MB), or within the first 1MB of system memory.
+///    - **Purpose**: Contains pointers to the RSDT (Root System Description Table) or XSDT (Extended System Description Table).
+///
+/// 2. **RSDT/XSDT (Root System Description Table/Extended System Description Table)**:
+///    - **Location**: Address provided by the RSDP.
+///    - **Purpose**: Contains pointers to other ACPI tables such as the FADT, DSDT, SSDT, and more.
+///
+/// 3. **Other ACPI Tables (e.g., FADT, DSDT)**:
+///    - **Location**: Addresses provided by the RSDT/XSDT.
+///    - **Purpose**: Provide detailed information about various system components and power management features.
+///
+/// Example Schema:
+///
+/// ```
+/// +---------------------------+
+/// | Extended BIOS Data Area   |
+/// | (EBDA)                    |
+/// |                           |
+/// | - RSDP (if present)       |
+/// +---------------------------+
+/// | System Memory (Below 1MB) |
+/// |                           |
+/// | - RSDP (if present)       |
+/// |                           |
+/// | Last 128KB of memory      |
+/// | below 1MB (e.g., 0xF0000) |
+/// | - RSDP (if present)       |
+/// +---------------------------+
+/// | Memory Above 1MB          |
+/// |                           |
+/// | - RSDT/XSDT (address from |
+/// |   RSDP)                   |
+/// | - Other ACPI Tables       |
+/// |   (addresses from         |
+/// |    RSDT/XSDT)             |
+/// +---------------------------+
+/// ```
+///
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers from
+/// the BootInfo structure.
 pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
+    // Get the RSDP from the boot information.
     let rsdp = boot_info.rsdp;
 
+    // Validate the checksum of the RSDP.
     if !(*rsdp).validate_checksum() {
         println!("Invalid RSDP checksum");
     }
 
+    // Print the RSDP details.
     println!("RSDP Details:");
     println!(
         "  Signature: {:?}",
@@ -112,13 +204,24 @@ pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
     println!("  Extended Checksum: {}", (*rsdp).extended_checksum);
     println!();
 
+    // Get the count of ACPI tables from the RSDP.
     let table_count = (*rsdp).get_table_count();
     println!("RSDT Table Count: {}", table_count);
 
-    let rsdp_manager = RsdpManager::new(rsdp);
+    // Initialize the RSDP manager.
+    let mut rsdp_manager = RsdpManager::new(rsdp);
+
+    // Iterate through the entries in the RSDT and add them to the RSDP manager.
     for i in 0..rsdp_manager.entry_count {
         if let Some(entry) = rsdp_manager.get_entry(i) {
-            println!("Entry {}: {:?}", i, entry);
+            println!("Entry {}: {:?}", i, *entry);
+            rsdp_manager.add_sdt_header(entry);
         }
+    }
+
+    // Get the FADT (Fixed ACPI Description Table) and enable ACPI.
+    if let Some(fadt) = rsdp_manager.sdt_headers.facp {
+        let fadt = Fadt::from_address(fadt);
+        fadt.enable_acpi();
     }
 }

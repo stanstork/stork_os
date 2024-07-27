@@ -1,5 +1,7 @@
 use core::arch::asm;
 
+use crate::registers::rdtsc::Rdtsc;
+
 // Ports for PIC command and data registers.
 pub const PIC1_DATA: Port = Port::new(0x21);
 pub const PIC2_DATA: Port = Port::new(0xA1);
@@ -64,6 +66,21 @@ pub fn outb(port: u16, data: u8) {
     }
 }
 
+pub fn inw(port: u16) -> u16 {
+    let result: u16;
+
+    unsafe {
+        asm!(
+            "in ax, dx",
+            out("ax") result,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+
+    result
+}
+
 /// Waits for I/O operations to complete.
 pub fn io_wait() {
     Port::new(0x80).write_port(0);
@@ -89,7 +106,7 @@ pub trait PortIO {
 
 /// Represents a hardware I/O port.
 pub struct Port {
-    port: u16,
+    pub(crate) port: u16,
 }
 
 impl Port {
@@ -121,4 +138,11 @@ impl PortIO for u16 {
     fn write_port(&self, data: u8) {
         outb(*self, data)
     }
+}
+
+pub fn sleep_for(milliseconds: u64) {
+    let start = Rdtsc::read();
+    // Calculate the target number of cycles to wait for.
+    let target = start + milliseconds + 1_0000_0000; // 1 ms = 1_0000_0000 cycles
+    while Rdtsc::read() < target {}
 }
