@@ -1,3 +1,5 @@
+use super::get_current_page_table;
+use crate::registers::cr3::Cr3;
 use core::arch::asm;
 
 /// Switches the current task to a new task by saving the state of the current task
@@ -35,6 +37,8 @@ pub extern "C" fn switch(old_stack: &mut u64, new_stack: &u64) {
             "mov rax, cr0",
             "or rax, 8",
             "mov cr0, rax",
+            // Set the new CR3 register
+            "call {set_cr3}",
             // Restore all general-purpose registers
             "pop rax",
             "pop rbx",
@@ -55,7 +59,52 @@ pub extern "C" fn switch(old_stack: &mut u64, new_stack: &u64) {
             "sti",
             // Return from interrupt, effectively switching to the new task
             "iretq",
+            set_cr3 = sym set_cr3,
             options(noreturn)
         );
+    }
+}
+
+/// This function starts a new thread by setting up the stack pointer and
+/// restoring the general-purpose registers. It then enables interrupts
+/// and returns to the thread's entry point.
+#[naked]
+pub extern "C" fn start_thread(stack_pointer: u64) {
+    unsafe {
+        asm!(
+            // Load the stack pointer from the argument (rdi)
+            "mov rsp, rdi",
+            // Restore general-purpose registers from the stack
+            "pop r15",
+            "pop r14",
+            "pop r13",
+            "pop r12",
+            "pop r11",
+            "pop r10",
+            "pop r9",
+            "pop r8",
+            "pop rdi",
+            "pop rsi",
+            "pop rbp",
+            "pop rbx",
+            "pop rdx",
+            "pop rcx",
+            "pop rax",
+            // Enable interrupts
+            "sti",
+            // Return to the thread's entry point
+            "iretq",
+            options(noreturn)
+        );
+    }
+}
+
+/// This function sets the CR3 register to the current page table.
+/// It is used during the context switch to update the page table
+/// for the new task.
+#[no_mangle]
+pub unsafe extern "C" fn set_cr3() {
+    if let Some(page_table) = get_current_page_table() {
+        Cr3::write(page_table);
     }
 }

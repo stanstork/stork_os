@@ -9,13 +9,13 @@ use core::{arch::asm, panic::PanicInfo};
 use drivers::screen::display::{self, DISPLAY};
 use interrupts::{isr, no_interrupts};
 use memory::global_allocator::GlobalAllocator;
-use process::{
-    process::{task_a, task_b, Priority, Process},
-    schedule,
+use structures::BootInfo;
+use tasks::{
+    process::Process,
     scheduler::{Scheduler, SCHEDULER},
+    thread::Priority,
     KERNEL_STACK_SIZE, KERNEL_STACK_START,
 };
-use structures::BootInfo;
 
 extern crate alloc;
 
@@ -25,10 +25,10 @@ mod drivers;
 mod gdt;
 mod interrupts;
 mod memory;
-mod process;
 mod registers;
 mod structures;
 mod sync;
+mod tasks;
 mod tss;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
@@ -56,8 +56,6 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             // initialize the memory
             memory::init(boot_info);
             tss::load_tss();
-
-            // test_proc();
         });
 
         test_proc();
@@ -74,7 +72,7 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 pub unsafe fn test_proc() {
-    process::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
+    tasks::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
 
     let proc1 = Process::create_kernel_process(test_thread1, Priority::Medium);
     println!("Process 1 created");
@@ -87,9 +85,6 @@ pub unsafe fn test_proc() {
     scheduler.add_thread(proc2.borrow().threads[0].borrow().clone());
 
     SCHEDULER = Some(scheduler);
-
-    // proc2.borrow().threads[0].borrow().exec();
-    // schedule();
 }
 
 extern "C" fn test_thread1() {

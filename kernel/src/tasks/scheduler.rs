@@ -1,8 +1,9 @@
 use super::{
-    process::{Priority, Process, Thread, ThreadStatus},
+    process::Process,
     switch::switch,
+    thread::{Priority, Status, Thread},
 };
-use crate::{println, sync::mutex::SpinMutex};
+use crate::{interrupts::no_interrupts, println, sync::mutex::SpinMutex};
 use alloc::{collections::VecDeque, sync::Arc};
 
 pub static mut SCHEDULER: Option<Scheduler> = None;
@@ -20,6 +21,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    /// Creates a new Scheduler instance with an idle thread.
     pub fn new() -> Self {
         let idle_process = Process::create_kernel_process(idle_thread, Priority::Idle);
         let idle_thread = Arc::new(SpinMutex::new(
@@ -35,43 +37,39 @@ impl Scheduler {
         }
     }
 
+    /// Adds a new thread to the scheduler's ready queue.
     pub fn add_thread(&mut self, thread: Thread) {
-        let priority = thread.priority;
+        let prio = thread.priority;
         let thread = Arc::new(SpinMutex::new(thread));
-        self.ready_queue[priority as usize].push_back(thread);
+        self.ready_queue[prio as usize].push_back(thread);
     }
 
-    pub fn get_next_thread(&mut self) -> Arc<SpinMutex<Thread>> {
-        for priority in 0..self.ready_queue.len() {
-            while let Some(thread) = self.ready_queue[priority].pop_front() {
-                if thread.lock().status == ThreadStatus::Ready {
-                    return thread.clone();
-                }
-            }
-        }
-        self.idle_thread.clone()
+    /// Returns the current thread being executed.
+    pub fn get_current_thread(&self) -> Arc<SpinMutex<Thread>> {
+        self.current_thread.clone()
     }
 
+    /// Schedules the next thread to run.
     pub fn schedule(&mut self) {
         // Get current thread info
-        let (mut current_stack_pointer, current_prio, current_status) = {
+        let (mut current_sp, current_prio, current_status) = {
             let locked = self.current_thread.lock();
             (locked.stack_pointer, locked.priority, locked.status)
         };
 
         // Get the next thread to run
         let next_thread = self.get_next_thread();
-        let next_stack_pointer = {
+        let next_sp = {
             let mut next_locked = next_thread.lock();
-            next_locked.status = ThreadStatus::Running;
+            next_locked.status = Status::Running;
             next_locked.stack_pointer
         };
 
         // Update the current thread status and move it to the ready queue if it was running
-        if current_status == ThreadStatus::Running {
+        if current_status == Status::Running {
             {
                 let mut current_locked = self.current_thread.lock();
-                current_locked.status = ThreadStatus::Ready;
+                current_locked.status = Status::Ready;
             }
             self.ready_queue[current_prio as usize].push_back(self.current_thread.clone());
         }
@@ -79,6 +77,23 @@ impl Scheduler {
         // Switch to the next thread
         self.current_thread = Arc::clone(&next_thread);
 
-        switch(&mut current_stack_pointer, &next_stack_pointer);
+        switch(&mut current_sp, &next_sp);
+    }
+
+    /// Reschedules the next thread to run, disabling interrupts during the operation.
+    pub fn reschedule(&mut self) {
+        no_interrupts(|| self.schedule());
+    }
+
+    /// Returns the next thread to be scheduled, based on priority and status.
+    fn get_next_thread(&mut self) -> Arc<SpinMutex<Thread>> {
+        for prio in 0..self.ready_queue.len() {
+            while let Some(thread) = self.ready_queue[prio].pop_front() {
+                if thread.lock().status == Status::Ready {
+                    return thread.clone();
+                }
+            }
+        }
+        self.idle_thread.clone()
     }
 }

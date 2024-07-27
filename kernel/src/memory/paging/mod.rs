@@ -69,11 +69,11 @@ unsafe fn remap_frame_buffer<F: FnMut() -> *mut PageTable>(
     pt_manager: &mut PageTableManager,
     frame_alloc: &mut F,
 ) {
-    let fb_start = boot_info.framebuffer.pointer.to_phys_addr();
+    let fb_start = boot_info.framebuffer.pointer.as_ptr() as usize;
     let fb_size =
         (boot_info.framebuffer.height * boot_info.framebuffer.width * 4) as usize + PAGE_SIZE;
     // page_frame_alloc.lock_pages(fb_start, fb_size / PAGE_SIZE + 1);
-    for i in (fb_start.0..fb_start.0 + fb_size).step_by(PAGE_SIZE) {
+    for i in (fb_start..fb_start + fb_size).step_by(PAGE_SIZE) {
         pt_manager.map_memory(VirtAddr(i), PhysAddr(i), frame_alloc, true);
     }
 }
