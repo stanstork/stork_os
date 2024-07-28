@@ -3,13 +3,18 @@ use core::arch::asm;
 use crate::registers::rdtsc::Rdtsc;
 
 // Ports for PIC command and data registers.
-pub const PIC1_DATA: Port = Port::new(0x21);
-pub const PIC2_DATA: Port = Port::new(0xA1);
-pub const PIC1_COMMAND: Port = Port::new(0x20);
-pub const PIC2_COMMAND: Port = Port::new(0xA0);
+pub const PIC_DATA_MASTER: Port = Port::new(0x21);
+pub const PIC_DATA_SLAVE: Port = Port::new(0xA1);
+pub const PIC_COMMAND_MASTER: Port = Port::new(0x20);
+pub const PIC_COMMAND_SLAVE: Port = Port::new(0xA0);
 
 // Initialization command words for PIC.
 pub const ICW1_INIT: u8 = 0x10;
+pub const ICW_1: u8 = 0x11;
+pub const ICW2_MASTER: u8 = 0x20;
+pub const ICW2_SLAVE: u8 = 0x28;
+pub const ICW3_MASTER: u8 = 0x04;
+pub const ICW3_SLAVE: u8 = 0x02;
 pub const ICW1_ICW4: u8 = 0x01;
 pub const ICW4_8086: u8 = 0x01;
 
@@ -87,12 +92,12 @@ pub fn io_wait() {
 }
 
 pub fn pic_end_master() {
-    PIC1_COMMAND.write_port(0x20);
+    PIC_COMMAND_MASTER.write_port(0x20);
 }
 
 pub fn pic_end_slave() {
-    PIC2_COMMAND.write_port(0x20);
-    PIC1_COMMAND.write_port(0x20);
+    PIC_COMMAND_SLAVE.write_port(0x20);
+    PIC_COMMAND_MASTER.write_port(0x20);
 }
 
 /// Trait defining basic I/O port operations.

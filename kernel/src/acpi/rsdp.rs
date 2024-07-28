@@ -37,8 +37,8 @@ pub struct StdHeaders {
     pub bgrt: Option<u64>,
 }
 
-impl Default for StdHeaders {
-    fn default() -> Self {
+impl StdHeaders {
+    pub const fn default() -> StdHeaders {
         StdHeaders {
             facp: None,
             apic: None,
@@ -51,8 +51,8 @@ impl Default for StdHeaders {
 }
 
 pub struct RsdpManager {
-    pub rsdp: *const Rsdp,
-    pub rsdt: *const SdtHeader,
+    pub rsd_ptr: *const Rsdp,
+    pub root_sdt: *const SdtHeader,
     pub entry_count: usize,
     pub sdt_headers: StdHeaders,
 }
@@ -63,8 +63,8 @@ impl RsdpManager {
         let entry_count = unsafe { (*rsdp).get_table_count() };
 
         RsdpManager {
-            rsdp,
-            rsdt,
+            rsd_ptr: rsdp,
+            root_sdt: rsdt,
             entry_count,
             sdt_headers: StdHeaders::default(),
         }
@@ -73,7 +73,7 @@ impl RsdpManager {
     pub fn get_entry(&self, index: usize) -> Option<*const SdtHeader> {
         if index < self.entry_count {
             let entries_base =
-                unsafe { (self.rsdt as *const u8).add(size_of::<SdtHeader>()) } as *const u32;
+                unsafe { (self.root_sdt as *const u8).add(size_of::<SdtHeader>()) } as *const u32;
             let entry_address = unsafe { *entries_base.add(index) } as *const SdtHeader;
             unsafe { Some(&*entry_address) }
         } else {
@@ -117,6 +117,13 @@ impl Rsdp {
         }
     }
 }
+
+pub static mut RSDP_MANAGER: RsdpManager = RsdpManager {
+    rsd_ptr: core::ptr::null(),
+    root_sdt: core::ptr::null(),
+    entry_count: 0,
+    sdt_headers: StdHeaders::default(),
+};
 
 /// Initializes and processes the RSDP (Root System Description Pointer).
 ///
@@ -214,14 +221,17 @@ pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
     // Iterate through the entries in the RSDT and add them to the RSDP manager.
     for i in 0..rsdp_manager.entry_count {
         if let Some(entry) = rsdp_manager.get_entry(i) {
-            println!("Entry {}: {:?}", i, *entry);
             rsdp_manager.add_sdt_header(entry);
         }
     }
 
+    // Store the RSDP manager in a static variable.
+    RSDP_MANAGER = rsdp_manager;
+
     // Get the FADT (Fixed ACPI Description Table) and enable ACPI.
-    if let Some(fadt) = rsdp_manager.sdt_headers.facp {
+    if let Some(fadt) = RSDP_MANAGER.sdt_headers.facp {
         let fadt = Fadt::from_address(fadt);
-        fadt.enable_acpi();
+        fadt.ensure_acpi_enabled();
+        println!("ACPI Enabled");
     }
 }

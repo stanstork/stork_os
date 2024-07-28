@@ -1,11 +1,5 @@
-use core::fmt;
-
-use crate::{
-    cpu::io::{inw, outb, sleep_for, Port, PortIO},
-    println,
-};
-
 use super::sdt::SdtHeader;
+use crate::cpu::io::inw;
 
 /// Fixed ACPI Description Table (FADT)
 /// The FADT is a table in the ACPI specification that provides the operating system
@@ -73,142 +67,28 @@ impl Fadt {
         unsafe { &*(address as *const Fadt) }
     }
 
-    pub fn enable_acpi(&self) {
+    /// Checks if ACPI is enabled by reading the SCI_EN bit from the PM1a control block.
+    /// Panics if ACPI is not enabled.
+    pub fn ensure_acpi_enabled(&self) {
+        // The SCI_EN bit is typically bit 0 in the PM1a control register. Its value is 1.
         const SCI_EN: u16 = 1;
 
-        let pm1a_cnt = self.pm1a_cnt_blk as u16;
-        let pm1b_cnt = self.pm1b_cnt_blk as u16;
+        unsafe {
+            // The `pm1a_cnt_blk` field contains the address of the PM1a control block.
+            // We cast it to a u16 to match the port I/O functions' expected input type.
+            let pm1a_cnt = self.pm1a_cnt_blk as u16;
 
-        // Check if the SCI_EN bit is set in the PM1 control register.
-        if (inw(pm1a_cnt) & SCI_EN) == 0 {
-            if self.smi_cmd != 0 && self.acpi_enable != 0 {
-                // Write the ACPI enable value to the SMI command port.
-                outb(self.smi_cmd as u16, self.acpi_enable);
+            // `inw` is a function to read a 16-bit value from the specified I/O port.
+            // It reads the current value from the PM1a control block.
+            let pm1a_value = inw(pm1a_cnt);
 
-                // Wait for the ACPI enable to be processed.
-                let mut enabled = false;
-                let mut i = 0;
-                while i < 300 {
-                    if (inw(pm1a_cnt) & SCI_EN) != 0 {
-                        enabled = true;
-                        break;
-                    }
-                    sleep_for(10);
-                    i += 1;
-                }
-
-                if pm1b_cnt != 0 {
-                    let mut i = 0;
-                    while i < 300 {
-                        if (inw(pm1b_cnt) & SCI_EN) != 0 {
-                            enabled = true;
-                            break;
-                        }
-                        sleep_for(10);
-                        i += 1;
-                    }
-                }
-
-                if !enabled {
-                    println!("ACPI enable failed");
-                } else {
-                    println!("ACPI enabled");
-                }
-            } else {
-                println!("No SMI command port or ACPI enable value");
+            // The function checks if the SCI_EN bit is set.
+            // This is done using a bitwise AND operation between the read value and the SCI_EN mask.
+            // If the SCI_EN bit is set, the result will be non-zero, indicating that ACPI is enabled.
+            if (pm1a_value & SCI_EN) == 0 {
+                // If ACPI is not enabled, panic with an error message.
+                panic!("ACPI is not enabled!");
             }
-        } else {
-            println!("ACPI already enabled");
         }
-    }
-}
-
-impl fmt::Debug for Fadt {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Fadt {{ ")?;
-        write!(f, "header: {:?}, ", self.header)?;
-        let firmware_ctrl = self.firmware_ctrl;
-        write!(f, "firmware_ctrl: {:#X}, ", firmware_ctrl)?;
-        let dsdt = self.dsdt;
-        write!(f, "dsdt: {:#X}, ", dsdt)?;
-        write!(f, "reserved: {:#X}, ", self.reserved)?;
-        write!(
-            f,
-            "preferred_pm_profile: {:#X}, ",
-            self.preferred_pm_profile
-        )?;
-        let sci_int = self.sci_int;
-        write!(f, "sci_int: {:#X}, ", sci_int)?;
-        let smi_cmd = self.smi_cmd;
-        write!(f, "smi_cmd: {:#X}, ", smi_cmd)?;
-        write!(f, "acpi_enable: {:#X}, ", self.acpi_enable)?;
-        write!(f, "acpi_disable: {:#X}, ", self.acpi_disable)?;
-        write!(f, "s4bios_req: {:#X}, ", self.s4bios_req)?;
-        write!(f, "pstate_cnt: {:#X}, ", self.pstate_cnt)?;
-        let pm1a_evt_blk = self.pm1a_evt_blk;
-        write!(f, "pm1a_evt_blk: {:#X}, ", pm1a_evt_blk)?;
-        let pm1b_evt_blk = self.pm1b_evt_blk;
-        write!(f, "pm1b_evt_blk: {:#X}, ", pm1b_evt_blk)?;
-        let pm1a_cnt_blk = self.pm1a_cnt_blk;
-        write!(f, "pm1a_cnt_blk: {:#X}, ", pm1a_cnt_blk)?;
-        let pm1b_cnt_blk = self.pm1b_cnt_blk;
-        write!(f, "pm1b_cnt_blk: {:#X}, ", pm1b_cnt_blk)?;
-        let pm2_cnt_blk = self.pm2_cnt_blk;
-        write!(f, "pm2_cnt_blk: {:#X}, ", pm2_cnt_blk)?;
-        let pm_tmr_blk = self.pm_tmr_blk;
-        write!(f, "pm_tmr_blk: {:#X}, ", pm_tmr_blk)?;
-        let gpe0_blk = self.gpe0_blk;
-        write!(f, "gpe0_blk: {:#X}, ", gpe0_blk)?;
-        let gpe1_blk = self.gpe1_blk;
-        write!(f, "gpe1_blk: {:#X}, ", gpe1_blk)?;
-        write!(f, "pm1_evt_len: {:#X}, ", self.pm1_evt_len)?;
-        write!(f, "pm1_cnt_len: {:#X}, ", self.pm1_cnt_len)?;
-        write!(f, "pm2_cnt_len: {:#X}, ", self.pm2_cnt_len)?;
-        write!(f, "pm_tmr_len: {:#X}, ", self.pm_tmr_len)?;
-        write!(f, "gpe0_blk_len: {:#X}, ", self.gpe0_blk_len)?;
-        write!(f, "gpe1_blk_len: {:#X}, ", self.gpe1_blk_len)?;
-        write!(f, "gpe1_base: {:#X}, ", self.gpe1_base)?;
-        write!(f, "cst_cnt: {:#X}, ", self.cst_cnt)?;
-        let p_lvl2_lat = self.p_lvl2_lat;
-        write!(f, "p_lvl2_lat: {:#X}, ", p_lvl2_lat)?;
-        let p_lvl3_lat = self.p_lvl3_lat;
-        write!(f, "p_lvl3_lat: {:#X}, ", p_lvl3_lat)?;
-        let flush_size = self.flush_size;
-        write!(f, "flush_size: {:#X}, ", flush_size)?;
-        let flush_stride = self.flush_stride;
-        write!(f, "flush_stride: {:#X}, ", flush_stride)?;
-        write!(f, "duty_offset: {:#X}, ", self.duty_offset)?;
-        write!(f, "duty_width: {:#X}, ", self.duty_width)?;
-        write!(f, "day_alarm: {:#X}, ", self.day_alarm)?;
-        write!(f, "mon_alarm: {:#X}, ", self.mon_alarm)?;
-        write!(f, "century: {:#X}, ", self.century)?;
-        let iapc_boot_arch = self.iapc_boot_arch;
-        write!(f, "iapc_boot_arch: {:#X}, ", iapc_boot_arch)?;
-        write!(f, "reserved2: {:#X}, ", self.reserved2)?;
-        let flags = self.flags;
-        write!(f, "flags: {:#X}, ", flags)?;
-        write!(f, "reset_reg: {:?}, ", self.reset_reg)?;
-        write!(f, "reset_value: {:#X}, ", self.reset_value)?;
-        let arm_boot_arch = self.arm_boot_arch;
-        write!(f, "arm_boot_arch: {:#X}, ", arm_boot_arch)?;
-        write!(f, "fadt_minor_version: {:#X}, ", self.fadt_minor_version)?;
-        let x_firmware_ctrl = self.x_firmware_ctrl;
-        write!(f, "x_firmware_ctrl: {:#X} ", x_firmware_ctrl)?;
-        write!(f, "}}")
-    }
-}
-
-impl fmt::Debug for GenericAddress {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GenericAddress {{ ")?;
-        write!(f, "address_space_id: {:#X}, ", self.address_space_id)?;
-        write!(f, "register_bit_width: {:#X}, ", self.register_bit_width)?;
-        write!(f, "register_bit_offset: {:#X}, ", self.register_bit_offset)?;
-        write!(f, "access_size: {:#X}, ", self.access_size)?;
-
-        let address = self.address;
-        write!(f, "address: {:#X} ", address)?;
-
-        write!(f, "}}")
     }
 }

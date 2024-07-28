@@ -21,6 +21,8 @@ use tasks::{
 extern crate alloc;
 
 mod acpi;
+mod apic;
+mod arch;
 mod cpu;
 mod data_types;
 mod drivers;
@@ -61,7 +63,9 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         });
 
         rsdp::init_rsdp(boot_info);
-        test_proc();
+        apic::setup_apic();
+
+        // test_proc();
     }
 
     loop {}
