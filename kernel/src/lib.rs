@@ -6,9 +6,13 @@
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 
 use acpi::rsdp;
+use apic::{Apic, APIC};
 use core::{arch::asm, panic::PanicInfo};
 use drivers::screen::display::{self, DISPLAY};
-use interrupts::{isr, no_interrupts};
+use interrupts::{
+    isr::{self, IDT},
+    no_interrupts,
+};
 use memory::global_allocator::GlobalAllocator;
 use structures::BootInfo;
 use tasks::{
@@ -60,12 +64,19 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             // initialize the memory
             memory::init(boot_info);
             tss::load_tss();
+
+            rsdp::init_rsdp(boot_info);
+            // apic::setup_apic();
+            println!("APIC initialized");
         });
 
-        rsdp::init_rsdp(boot_info);
-        apic::setup_apic();
+        // IDT.disable_pic_interrupt(2);
+        let apic = Apic::init();
+        APIC = Some(apic);
+        APIC.as_ref().unwrap().ioapic.enable_irq(1);
+        APIC.as_ref().unwrap().ioapic.enable_irq(0);
 
-        // test_proc();
+        test_proc();
     }
 
     loop {}

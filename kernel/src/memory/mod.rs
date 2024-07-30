@@ -6,6 +6,7 @@ use self::{
 };
 use crate::{println, structures::BootInfo, ALLOCATOR};
 use alloc::boxed::Box;
+use paging::table::PageTable;
 
 pub(crate) mod addr;
 pub(crate) mod bitmap;
@@ -137,4 +138,9 @@ fn test_heap_allocation() {
 
     // Print the modified value to demonstrate successful heap allocation and modification
     println!("Heap value: {}", *v);
+}
+
+pub fn active_level_4_table() -> *mut PageTable {
+    let root_page_table = unsafe { &mut *(paging::ROOT_PAGE_TABLE as *mut PageTable) };
+    root_page_table
 }

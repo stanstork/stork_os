@@ -1,4 +1,5 @@
 use crate::{
+    apic::APIC,
     cpu::io::{pic_end_master, Port, PortIO},
     interrupts::isr::{IDT, KERNEL_CS},
     print, println,
@@ -461,7 +462,8 @@ unsafe extern "x86-interrupt" fn keyboard_irq_handler() {
     // Check if the keyboard's output buffer is full
     if (kybrd_status & KYBRD_CTRL_STATS_MASK_OUT_BUF) != 0 {
         let mut scan_code = KEYBOARD.read();
-        pic_end_master(); // Send EOI signal to the PIC.
+        // pic_end_master(); // Send EOI signal to the PIC.
+        APIC.as_ref().unwrap().lapic.eoi();
 
         // Check for prefix scan codes (used for special keys)
         if scan_code == 0xE0 || scan_code == 0xE1 {
@@ -500,6 +502,7 @@ unsafe extern "x86-interrupt" fn keyboard_irq_handler() {
 
         KEYBOARD.current_state = State::Normal;
     } else {
-        pic_end_master(); // Send EOI even if no key was pressed
+        // pic_end_master(); // Send EOI even if no key was pressed
+        APIC.as_ref().unwrap().lapic.eoi();
     }
 }

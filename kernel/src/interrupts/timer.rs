@@ -1,6 +1,8 @@
 use super::isr::{InterruptStackFrame, IDT, KERNEL_CS};
 use crate::{
+    apic::APIC,
     cpu::io::{outb, pic_end_master},
+    print,
     tasks::schedule,
 };
 
@@ -26,11 +28,19 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
         TIMER.tick += 1;
     }
     // Print a dot for each timer tick (for debugging).
-    // print!(".");
+    print!(".");
 
     // Send EOI signal to the PIC.
-    pic_end_master();
-    schedule();
+
+    unsafe {
+        if let Some(apic) = &APIC {
+            apic.lapic.eoi();
+        } else {
+            pic_end_master();
+        }
+    };
+
+    // schedule();
 }
 
 pub fn init_timer() {
