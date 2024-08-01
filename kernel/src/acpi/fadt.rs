@@ -49,7 +49,7 @@ pub struct Fadt {
     pub reset_value: u8,           // Value to write to the reset register.
     pub arm_boot_arch: u16,        // Boot architecture flags.
     pub fadt_minor_version: u8,    // FADT minor version.
-    pub x_firmware_ctrl: u64,
+    pub x_firmware_ctrl: u64,      // Extended FACS address.
 }
 
 /// Generic Address structure used in the FADT.
@@ -73,22 +73,20 @@ impl Fadt {
         // The SCI_EN bit is typically bit 0 in the PM1a control register. Its value is 1.
         const SCI_EN: u16 = 1;
 
-        unsafe {
-            // The `pm1a_cnt_blk` field contains the address of the PM1a control block.
-            // We cast it to a u16 to match the port I/O functions' expected input type.
-            let pm1a_cnt = self.pm1a_cnt_blk as u16;
+        // The `pm1a_cnt_blk` field contains the address of the PM1a control block.
+        // We cast it to a u16 to match the port I/O functions' expected input type.
+        let pm1a_cnt = self.pm1a_cnt_blk as u16;
 
-            // `inw` is a function to read a 16-bit value from the specified I/O port.
-            // It reads the current value from the PM1a control block.
-            let pm1a_value = inw(pm1a_cnt);
+        // `inw` is a function to read a 16-bit value from the specified I/O port.
+        // It reads the current value from the PM1a control block.
+        let pm1a_value = inw(pm1a_cnt);
 
-            // The function checks if the SCI_EN bit is set.
-            // This is done using a bitwise AND operation between the read value and the SCI_EN mask.
-            // If the SCI_EN bit is set, the result will be non-zero, indicating that ACPI is enabled.
-            if (pm1a_value & SCI_EN) == 0 {
-                // If ACPI is not enabled, panic with an error message.
-                panic!("ACPI is not enabled!");
-            }
+        // The function checks if the SCI_EN bit is set.
+        // This is done using a bitwise AND operation between the read value and the SCI_EN mask.
+        // If the SCI_EN bit is set, the result will be non-zero, indicating that ACPI is enabled.
+        if (pm1a_value & SCI_EN) == 0 {
+            // If ACPI is not enabled, panic with an error message.
+            panic!("ACPI is not enabled!");
         }
     }
 }

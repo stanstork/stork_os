@@ -28,6 +28,7 @@ pub struct Rsdp {
     pub reserved: [u8; 3],
 }
 
+/// Struct to hold pointers to various System Description Tables.
 pub struct StdHeaders {
     pub facp: Option<u64>,
     pub apic: Option<u64>,
@@ -35,6 +36,14 @@ pub struct StdHeaders {
     pub mcfg: Option<u64>,
     pub waet: Option<u64>,
     pub bgrt: Option<u64>,
+}
+
+/// Manager for handling RSDP and related System Description Tables.
+pub struct RsdpManager {
+    pub rsd_ptr: *const Rsdp,       // Pointer to the RSDP.
+    pub root_sdt: *const SdtHeader, // Pointer to the Root System Description Table (RSDT or XSDT).
+    pub entry_count: usize,         // Number of entries in the RSDT or XSDT.
+    pub sdt_headers: StdHeaders,    // Pointers to various System Description Tables.
 }
 
 impl StdHeaders {
@@ -50,14 +59,8 @@ impl StdHeaders {
     }
 }
 
-pub struct RsdpManager {
-    pub rsd_ptr: *const Rsdp,
-    pub root_sdt: *const SdtHeader,
-    pub entry_count: usize,
-    pub sdt_headers: StdHeaders,
-}
-
 impl RsdpManager {
+    /// Creates a new RsdpManager with the given RSDP pointer.
     pub fn new(rsdp: *const Rsdp) -> RsdpManager {
         let rsdt = unsafe { (*rsdp).get_root_sdt() };
         let entry_count = unsafe { (*rsdp).get_table_count() };
@@ -70,6 +73,7 @@ impl RsdpManager {
         }
     }
 
+    /// Retrieves an entry from the RSDT by index.
     pub fn get_entry(&self, index: usize) -> Option<*const SdtHeader> {
         if index < self.entry_count {
             let entries_base =
@@ -81,6 +85,7 @@ impl RsdpManager {
         }
     }
 
+    /// Adds a System Description Table header to the manager based on its signature.
     pub fn add_sdt_header(&mut self, header: *const SdtHeader) {
         let signature = core::str::from_utf8(unsafe { &(*header).signature }).unwrap();
         match signature {
@@ -96,13 +101,16 @@ impl RsdpManager {
 }
 
 impl Rsdp {
+    /// Validates the checksum of the RSDP.
     pub fn validate_checksum(&self) -> bool {
         let mut sum = 0u8;
 
+        // Sum the first 20 bytes to validate the checksum.
         for byte in unsafe { core::slice::from_raw_parts(self as *const Rsdp as *const u8, 20) } {
             sum = sum.wrapping_add(*byte);
         }
 
+        // The sum should be zero if the checksum is valid.
         sum == 0
     }
 
@@ -118,6 +126,7 @@ impl Rsdp {
     }
 }
 
+/// Global RSDP manager instance.
 pub static mut RSDP_MANAGER: RsdpManager = RsdpManager {
     rsd_ptr: core::ptr::null(),
     root_sdt: core::ptr::null(),
@@ -126,58 +135,6 @@ pub static mut RSDP_MANAGER: RsdpManager = RsdpManager {
 };
 
 /// Initializes and processes the RSDP (Root System Description Pointer).
-///
-/// This function validates the checksum of the RSDP, prints its details,
-/// and initializes the RSDP manager to handle the ACPI tables. It then
-/// retrieves the Fixed ACPI Description Table (FADT) and enables ACPI.
-///
-/// ACPI Table Locations in BIOS:
-///
-/// ACPI tables are located in specific regions of memory, defined by the system firmware.
-///
-/// 1. **RSDP (Root System Description Pointer)**:
-///    - **Location**: Typically found in the first 1KB of the Extended BIOS Data Area (EBDA),
-///      in the last 128KB of the system's main memory (below 1MB), or within the first 1MB of system memory.
-///    - **Purpose**: Contains pointers to the RSDT (Root System Description Table) or XSDT (Extended System Description Table).
-///
-/// 2. **RSDT/XSDT (Root System Description Table/Extended System Description Table)**:
-///    - **Location**: Address provided by the RSDP.
-///    - **Purpose**: Contains pointers to other ACPI tables such as the FADT, DSDT, SSDT, and more.
-///
-/// 3. **Other ACPI Tables (e.g., FADT, DSDT)**:
-///    - **Location**: Addresses provided by the RSDT/XSDT.
-///    - **Purpose**: Provide detailed information about various system components and power management features.
-///
-/// Example Schema:
-///
-/// ```
-/// +---------------------------+
-/// | Extended BIOS Data Area   |
-/// | (EBDA)                    |
-/// |                           |
-/// | - RSDP (if present)       |
-/// +---------------------------+
-/// | System Memory (Below 1MB) |
-/// |                           |
-/// | - RSDP (if present)       |
-/// |                           |
-/// | Last 128KB of memory      |
-/// | below 1MB (e.g., 0xF0000) |
-/// | - RSDP (if present)       |
-/// +---------------------------+
-/// | Memory Above 1MB          |
-/// |                           |
-/// | - RSDT/XSDT (address from |
-/// |   RSDP)                   |
-/// | - Other ACPI Tables       |
-/// |   (addresses from         |
-/// |    RSDT/XSDT)             |
-/// +---------------------------+
-/// ```
-///
-/// # Safety
-/// This function is unsafe because it dereferences raw pointers from
-/// the BootInfo structure.
 pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
     // Get the RSDP from the boot information.
     let rsdp = boot_info.rsdp;
@@ -187,7 +144,6 @@ pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
         println!("Invalid RSDP checksum");
     }
 
-    // Print the RSDP details.
     println!("RSDP Details:");
     println!(
         "  Signature: {:?}",
@@ -211,10 +167,6 @@ pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
     println!("  Extended Checksum: {}", (*rsdp).extended_checksum);
     println!();
 
-    // Get the count of ACPI tables from the RSDP.
-    let table_count = (*rsdp).get_table_count();
-    println!("RSDT Table Count: {}", table_count);
-
     // Initialize the RSDP manager.
     let mut rsdp_manager = RsdpManager::new(rsdp);
 
@@ -225,13 +177,13 @@ pub unsafe fn init_rsdp(boot_info: &'static BootInfo) {
         }
     }
 
-    // Store the RSDP manager in a static variable.
-    RSDP_MANAGER = rsdp_manager;
-
-    // Get the FADT (Fixed ACPI Description Table) and enable ACPI.
-    if let Some(fadt) = RSDP_MANAGER.sdt_headers.facp {
-        let fadt = Fadt::from_address(fadt);
+    // Ensure the ACPI is enabled if the FADT is present.
+    if let Some(fadt) = rsdp_manager.sdt_headers.facp {
+        let fadt = Fadt::from_address(fadt); // Create an FADT object from the address.
         fadt.ensure_acpi_enabled();
         println!("ACPI Enabled");
     }
+
+    // Store the RSDP manager in the global static variable.
+    RSDP_MANAGER = rsdp_manager;
 }

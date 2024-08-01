@@ -6,11 +6,14 @@
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 
 use acpi::rsdp;
-use apic::{Apic, APIC};
+use apic::APIC;
 use core::{arch::asm, panic::PanicInfo};
-use drivers::screen::display::{self, DISPLAY};
+use drivers::{
+    keyboard::KEYBOARD,
+    screen::display::{self, DISPLAY},
+};
 use interrupts::{
-    isr::{self, IDT},
+    isr::{self, IDT, KEYBOARD_IRQ},
     no_interrupts,
 };
 use memory::global_allocator::GlobalAllocator;
@@ -70,11 +73,8 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             println!("APIC initialized");
         });
 
-        // IDT.disable_pic_interrupt(2);
-        let apic = Apic::init();
-        APIC = Some(apic);
-        APIC.as_ref().unwrap().ioapic.enable_irq(1);
-        APIC.as_ref().unwrap().ioapic.enable_irq(0);
+        apic::enable_apic_mode(); // enable the APIC mode
+        APIC.lock().enable_irq(KEYBOARD_IRQ as u8); // enable the keyboard interrupt
 
         test_proc();
     }

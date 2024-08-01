@@ -1,59 +1,93 @@
 use crate::{
     cpu::io::{Port, PortIO},
-    interrupts::isr::IDT,
-    memory::{
-        self,
-        addr::{PhysAddr, VirtAddr},
-        paging::{
-            page_table_manager::{self, PageTableManager},
-            table::PageTable,
-            PAGE_TABLE_MANAGER,
-        },
-    },
+    interrupts::isr::{IDT, KEYBOARD_IRQ, TIMER_IRQ},
+    memory::{self},
 };
 
-pub const LVT_TIMER: u32 = 0x320;
-pub const LVT_THERMAL: u32 = 0x330;
-pub const LVT_PERFMON: u32 = 0x340;
-pub const LVT_LINT0: u32 = 0x350;
-pub const LVT_LINT1: u32 = 0x360;
-pub const LVT_ERROR: u32 = 0x370;
-pub const LVT_EOI: u32 = 0xB0;
-pub const LVT_SPV: u32 = 0xF0;
-pub const LVT_TPR: u32 = 0x80;
+// LAPIC Local Vector Table (LVT) Registers
+pub const LVT_TIMER: u32 = 0x320; // Local Vector Timer Register
+pub const LVT_THERMAL: u32 = 0x330; // Local Vector Thermal Sensor Register
+pub const LVT_PERFMON: u32 = 0x340; // Local Vector Performance Monitoring Register
+pub const LVT_LINT0: u32 = 0x350; // Local Vector Local Interrupt 0 Register
+pub const LVT_LINT1: u32 = 0x360; // Local Vector Local Interrupt 1 Register
+pub const LVT_ERROR: u32 = 0x370; // Local Vector Error Register
+pub const LVT_EOI: u32 = 0xB0; // Local Vector EOI Register
+pub const LVT_SPV: u32 = 0xF0; // Local Vector Spurious Interrupt Vector Register
+pub const LVT_TPR: u32 = 0x80; // Local Vector Task Priority Register
 
-pub const APIC_LVT_MASKED: u32 = 0x10000;
+// LAPIC Timer Configuration Registers
+pub const TIMER_DIVIDE_CONFIG_REG: u32 = 0x3E0; // Timer Divide Configuration Register
+pub const TIMER_INITIAL_COUNT_REG: u32 = 0x380; // Timer Initial Count Register
 
+// LAPIC LVT Flags
+pub const APIC_LVT_MASKED: u32 = 0x10000; // Masked flag for LVT registers
+pub const APIC_TIMER_PERIODIC_MODE: u32 = 1 << 17; // Timer periodic mode flag
+pub const APIC_SPURIOUS_INTERRUPT_VECTOR_ENABLE: u32 = 0x100; // Spurious interrupt vector enable flag
+
+// PIC and IMCR Ports
+pub const PIC_IMCR_SELECT: u16 = 0x22;
+pub const PIC_IMCR_DATA: u16 = 0x23;
+pub const IMCR_SELECT_REGISTER: u8 = 0x70;
+pub const IMCR_DISABLE_PIC: u8 = 0x01;
+
+// LAPIC Timer Configuration
+pub const LAPIC_TIMER_VECTOR: u32 = 32;
+pub const LAPIC_TIMER_INITIAL_COUNT: u32 = 400_000; // Calculated initial count for 250 Hz (assume)
+pub const LAPIC_TIMER_DIVIDE_CONFIG: u32 = 0x1; // Divide by 1
+
+/// Represents the Local APIC (LAPIC) structure.
 pub struct Lapic {
-    pub base: *mut u32,
+    pub local_apic_address: *mut u32,
 }
 
 impl Lapic {
-    pub const fn new(lapic_base: u64) -> Lapic {
+    /// Creates a new LAPIC instance with the specified local APIC address.
+    pub const fn new(local_apic_address: u32) -> Lapic {
         Lapic {
-            base: lapic_base as *mut u32,
+            local_apic_address: local_apic_address as *mut u32,
         }
     }
 
-    pub unsafe fn enable_apic_mode(lapic_base: u64) {
-        IDT.disable_pic_interrupt(0);
-        IDT.disable_pic_interrupt(1);
+    /// Enables APIC mode and configures necessary settings.
+    pub fn enable(&self) {
+        // Disable the PIC by masking its interrupts
+        unsafe {
+            IDT.disable_pic_interrupt(KEYBOARD_IRQ);
+            IDT.disable_pic_interrupt(TIMER_IRQ);
+        }
 
-        Port::new(0x22).write_port(0x70); // Select IMCR at 0x70
-        Port::new(0x23).write_port(0x01); // Write IMCR, 0x00 connects PIC to LINT0, 0x01 disconnects
+        // Enable the APIC by setting the APIC enable bit in the APIC base address register
+        Port::new(PIC_IMCR_SELECT).write_port(IMCR_SELECT_REGISTER); // Select IMCR at 0x70
+        Port::new(PIC_IMCR_DATA).write_port(IMCR_DISABLE_PIC); // Set IMCR to disconnect PIC from LINT0
 
-        Self::map_lapic_memory(lapic_base);
+        // Map the LAPIC memory address
+        memory::map_io(self.local_apic_address as u64);
+
+        // Initialize the LAPIC
+        self.init();
     }
 
-    pub unsafe fn init(&self) {
+    /// Sends an End-of-Interrupt (EOI) signal to the LAPIC.
+    pub fn eoi(&self) {
+        self.write_register(LVT_EOI, 0);
+    }
+
+    /// Initializes the LAPIC by setting up the vector table, configuring the timer,
+    /// writing the spurious interrupt vector, and sending an End-of-Interrupt (EOI).
+    fn init(&self) {
         self.init_vector_table();
-        self.setup_timer(32, 1000000, 0x3);
+        self.setup_timer(
+            LAPIC_TIMER_VECTOR,
+            LAPIC_TIMER_INITIAL_COUNT,
+            LAPIC_TIMER_DIVIDE_CONFIG,
+        );
         self.write_spurious_interrupt_vector();
-        self.eoi();
-        self.write_register(LVT_TPR, 0);
+        self.eoi(); // Send an End-of-Interrupt (EOI) signal
+        self.write_register(LVT_TPR, 0); // Set the Task Priority Register to 0
     }
 
-    unsafe fn init_vector_table(&self) {
+    /// Configures the Local Vector Table (LVT) by masking all LAPIC interrupts.
+    fn init_vector_table(&self) {
         // Mask all interrupts
         self.write_register(LVT_TIMER, APIC_LVT_MASKED); // Mask the timer interrupt
         self.write_register(LVT_THERMAL, APIC_LVT_MASKED); // Mask the thermal sensor interrupt
@@ -63,64 +97,44 @@ impl Lapic {
         self.write_register(LVT_ERROR, APIC_LVT_MASKED); // Mask the error interrupt
     }
 
-    unsafe fn setup_timer(&self, vector: u32, initial_count: u32, divide_config: u32) {
-        // Timer Divide Configuration Register (Divide by 1)
-        self.write_register(0x3E0, divide_config);
+    /// Configures the LAPIC timer with a specific vector, initial count, and divide configuration.
+    fn setup_timer(&self, vector: u32, initial_count: u32, divide_config: u32) {
+        // Set the timer divide configuration
+        self.write_register(TIMER_DIVIDE_CONFIG_REG, divide_config);
 
-        // Timer Initial Count Register (Initial count value)
-        self.write_register(0x380, initial_count);
+        // Set the initial count for the timer
+        self.write_register(TIMER_INITIAL_COUNT_REG, initial_count);
 
-        // Timer LVT Register (Timer mode: periodic, vector number)
-        let timer_lvt_value = vector | (1 << 17); // Bit 17 set to 1 for periodic mode
-        self.write_register(0x320, timer_lvt_value);
+        // Configure the timer as periodic and set the interrupt vector
+        let timer_lvt_value = vector | APIC_TIMER_PERIODIC_MODE;
+        self.write_register(LVT_TIMER, timer_lvt_value);
     }
 
-    /// Writes a value to a LAPIC register
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because it performs raw pointer arithmetic and
-    /// writes to a memory-mapped IO register.
-    unsafe fn write_register(&self, reg: u32, value: u32) {
-        // Calculate the register address
-        let reg_ptr = self.base.add(reg as usize / 4); // Divide by 4 because the base is a pointer to u32
-
-        // Write the value to the register using volatile to ensure the write is not optimized out
-        core::ptr::write_volatile(reg_ptr, value);
-    }
-
-    /// Reads a value from a LAPIC register
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because it performs raw pointer arithmetic and
-    /// reads from a memory-mapped IO register.
-    unsafe fn read_register(&self, reg: u32) -> u32 {
-        // Calculate the register address
-        let reg_ptr = self.base.add(reg as usize / 4); // Divide by 4 because the base is a pointer to u32
-
-        // Read the value from the register using volatile to ensure the read is not optimized out
-        core::ptr::read_volatile(reg_ptr)
-    }
-
-    unsafe fn write_spurious_interrupt_vector(&self) {
-        let value = self.read_register(LVT_SPV) | 0x100;
+    /// Writes the spurious interrupt vector to enable LAPIC interrupts.
+    fn write_spurious_interrupt_vector(&self) {
+        let value = self.read_register(LVT_SPV) | APIC_SPURIOUS_INTERRUPT_VECTOR_ENABLE;
         self.write_register(LVT_SPV, value);
     }
 
-    pub unsafe fn eoi(&self) {
-        self.write_register(LVT_EOI, 0);
+    /// Writes a value to a LAPIC register
+    fn write_register(&self, reg: u32, value: u32) {
+        unsafe {
+            // Calculate the register address
+            let reg_ptr = self.local_apic_address.add(reg as usize / 4); // Divide by 4 because the base is a pointer to u32
+
+            // Write the value to the register using volatile to ensure the write is not optimized out
+            core::ptr::write_volatile(reg_ptr, value);
+        }
     }
 
-    unsafe fn map_lapic_memory(lapic_base: u64) {
-        let root_page_table = memory::active_level_4_table();
-        let mut page_table_manager = PageTableManager::new(root_page_table);
-        let mut frame_alloc =
-            || PAGE_TABLE_MANAGER.as_mut().unwrap().alloc_zeroed_page().0 as *mut PageTable;
+    /// Reads a value from a LAPIC register
+    fn read_register(&self, reg: u32) -> u32 {
+        unsafe {
+            // Calculate the register address
+            let reg_ptr = self.local_apic_address.add(reg as usize / 4); // Divide by 4 because the base is a pointer to u32
 
-        let virt_addr = VirtAddr(lapic_base as usize);
-        let phys_addr = PhysAddr(lapic_base as usize);
-
-        page_table_manager.map_memory(virt_addr, phys_addr, &mut frame_alloc, false);
+            // Read the value from the register using volatile to ensure the read is not optimized out
+            core::ptr::read_volatile(reg_ptr)
+        }
     }
 }

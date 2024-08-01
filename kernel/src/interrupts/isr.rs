@@ -13,6 +13,10 @@ use core::{arch::asm, fmt::Debug};
 pub const KERNEL_CS: u16 = 0x08;
 pub const IDT_ENTRIES: usize = 256;
 
+// Constants for PIC initialization.
+pub const KEYBOARD_IRQ: usize = 1;
+pub const TIMER_IRQ: usize = 0;
+
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
 #[repr(C, packed)]
 pub struct InterruptStackFrame {

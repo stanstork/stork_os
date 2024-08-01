@@ -6,7 +6,7 @@ use self::{
 };
 use crate::{println, structures::BootInfo, ALLOCATOR};
 use alloc::boxed::Box;
-use paging::table::PageTable;
+use paging::{page_table_manager::PageTableManager, table::PageTable};
 
 pub(crate) mod addr;
 pub(crate) mod bitmap;
@@ -143,4 +143,14 @@ fn test_heap_allocation() {
 pub fn active_level_4_table() -> *mut PageTable {
     let root_page_table = unsafe { &mut *(paging::ROOT_PAGE_TABLE as *mut PageTable) };
     root_page_table
+}
+
+pub fn map_io(addr: u64) {
+    let virt_addr = VirtAddr(addr as usize);
+    let phys_addr = PhysAddr(addr as usize);
+
+    let root_page_table = active_level_4_table();
+    let mut page_table_manager = PageTableManager::new(root_page_table);
+
+    unsafe { page_table_manager.map_io(virt_addr, phys_addr) };
 }
