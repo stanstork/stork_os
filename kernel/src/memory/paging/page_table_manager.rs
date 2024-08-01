@@ -168,6 +168,13 @@ impl PageTableManager {
         PhysAddr(pt_entry.get_frame_addr().unwrap())
     }
 
+    /// Maps an I/O address to the virtual address space.
+    pub unsafe fn map_io(&mut self, virt: VirtAddr, phys: PhysAddr) {
+        let page_table_ptr = self.alloc_zeroed_page().0 as *mut PageTable;
+        let mut frame_alloc = || page_table_ptr;
+        self.map_memory(virt, phys, &mut frame_alloc, false);
+    }
+
     /// Allocates a zeroed page.
     ///
     /// This function allocates a new page using the heap allocator and zeroes it out.

@@ -1,4 +1,7 @@
-use crate::structures::DescriptorTablePointer;
+use crate::{
+    cpu::io::{PortIO, PIC_COMMAND_MASTER, PIC_DATA_MASTER},
+    structures::DescriptorTablePointer,
+};
 use core::{
     arch::asm,
     mem::size_of,
@@ -139,6 +142,12 @@ impl InterruptDescriptorTable {
     pub unsafe fn load(&self) {
         let idt_ptr = self.get_pointer();
         asm!("lidt [{}]", in(reg) &idt_ptr, options(readonly, nostack));
+    }
+
+    pub fn disable_pic_interrupt(&self, int_no: usize) {
+        let mask = 1 << int_no;
+        let current_mask = PIC_DATA_MASTER.read_port();
+        PIC_DATA_MASTER.write_port(current_mask | mask);
     }
 }
 

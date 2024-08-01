@@ -1,8 +1,5 @@
 use super::isr::{InterruptStackFrame, IDT, KERNEL_CS};
-use crate::{
-    cpu::io::{outb, pic_end_master},
-    tasks::schedule,
-};
+use crate::{cpu::io::outb, interrupts::end_of_interrupt, print, tasks::schedule};
 
 const CLOCK_TICK_RATE: u32 = 1193182u32; // The PIT's input frequency is 1.193182 MHz.
 const TIMER_TICK_RATE: u32 = 100; // The timer interrupt frequency is 100 Hz.
@@ -26,10 +23,12 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
         TIMER.tick += 1;
     }
     // Print a dot for each timer tick (for debugging).
-    // print!(".");
+    print!(".");
 
-    // Send EOI signal to the PIC.
-    pic_end_master();
+    // Send the End of Interrupt (EOI) signal.
+    end_of_interrupt();
+
+    // Schedule the next task.
     schedule();
 }
 

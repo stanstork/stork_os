@@ -1,8 +1,8 @@
 use super::{idt::InterruptDescriptorTable, timer::init_timer};
 use crate::{
     cpu::io::{
-        io_wait, PortIO, ICW1_ICW4, ICW1_INIT, ICW4_8086, PIC1_COMMAND, PIC1_DATA, PIC2_COMMAND,
-        PIC2_DATA,
+        io_wait, PortIO, ICW1_ICW4, ICW1_INIT, ICW4_8086, PIC_COMMAND_MASTER, PIC_COMMAND_SLAVE,
+        PIC_DATA_MASTER, PIC_DATA_SLAVE,
     },
     drivers::keyboard::init_keyboard,
     println,
@@ -12,6 +12,10 @@ use core::{arch::asm, fmt::Debug};
 // Constants for kernel code segment and IDT entry count.
 pub const KERNEL_CS: u16 = 0x08;
 pub const IDT_ENTRIES: usize = 256;
+
+// Constants for PIC initialization.
+pub const KEYBOARD_IRQ: usize = 1;
+pub const TIMER_IRQ: usize = 0;
 
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
 #[repr(C, packed)]
@@ -47,6 +51,8 @@ pub fn init() {
             .set_gate(gpf_fault_handler as u64, 0x8E, KERNEL_CS);
         IDT.breakpoint
             .set_gate(breakpoint_handler as u64, 0x8E, KERNEL_CS);
+        IDT.div_by_zero
+            .set_gate(divide_by_zero_handler as u64, 0x8E, KERNEL_CS);
 
         // Set all other entries to the default handler
         for i in 32..IDT_ENTRIES {
@@ -74,46 +80,46 @@ pub fn init() {
         // Initialize the keyboard
         init_keyboard();
 
-        PIC1_DATA.write_port(0b11111000);
+        PIC_DATA_MASTER.write_port(0b11111000);
         io_wait();
-        PIC2_DATA.write_port(0b11101111);
+        PIC_DATA_SLAVE.write_port(0b11101111);
     }
 }
 
 /// Remaps the PIC to avoid conflicts with CPU exceptions.
 pub fn remap_pic() {
     // Save current masks.
-    let pic1 = PIC1_DATA.read_port();
-    let pic2 = PIC2_DATA.read_port();
+    let pic1 = PIC_DATA_MASTER.read_port();
+    let pic2 = PIC_DATA_SLAVE.read_port();
 
     // Initialize PICs in cascade mode.
-    PIC1_COMMAND.write_port(ICW1_INIT | ICW1_ICW4);
+    PIC_COMMAND_MASTER.write_port(ICW1_INIT | ICW1_ICW4);
     io_wait();
-    PIC2_COMMAND.write_port(ICW1_INIT | ICW1_ICW4);
+    PIC_COMMAND_SLAVE.write_port(ICW1_INIT | ICW1_ICW4);
     io_wait();
 
     // Set vector offsets.
-    PIC1_DATA.write_port(0x20); // ICW2: Master PIC vector offset
+    PIC_DATA_MASTER.write_port(0x20); // ICW2: Master PIC vector offset
     io_wait();
-    PIC2_DATA.write_port(0x28); // ICW2: Slave PIC vector offset
+    PIC_DATA_SLAVE.write_port(0x28); // ICW2: Slave PIC vector offset
     io_wait();
 
     // Configure PIC cascading.
-    PIC1_DATA.write_port(4); // ICW3: tell Master PIC that there is a slave PIC at IRQ2 (0000 0100)
+    PIC_DATA_MASTER.write_port(4); // ICW3: tell Master PIC that there is a slave PIC at IRQ2 (0000 0100)
     io_wait();
-    PIC2_DATA.write_port(2); // ICW3: tell Slave PIC its cascade identity (0000 0010)
+    PIC_DATA_SLAVE.write_port(2); // ICW3: tell Slave PIC its cascade identity (0000 0010)
     io_wait();
 
     // Set PICs to 8086 mode.
-    PIC1_DATA.write_port(ICW4_8086);
+    PIC_DATA_MASTER.write_port(ICW4_8086);
     io_wait();
-    PIC2_DATA.write_port(ICW4_8086);
+    PIC_DATA_SLAVE.write_port(ICW4_8086);
     io_wait();
 
     // Restore saved masks.
-    PIC1_DATA.write_port(pic1);
+    PIC_DATA_MASTER.write_port(pic1);
     io_wait();
-    PIC2_DATA.write_port(pic2);
+    PIC_DATA_SLAVE.write_port(pic2);
 }
 
 // Various interrupt handlers follow:
@@ -165,6 +171,10 @@ pub extern "x86-interrupt" fn gpf_fault_handler(stack_frame: InterruptStackFrame
 /// Default handler for all other interrupts.
 pub extern "x86-interrupt" fn default_handler(stack_frame: InterruptStackFrame) {
     // println!("Interrupt: Default handler");
+}
+
+pub extern "x86-interrupt" fn divide_by_zero_handler(stack_frame: InterruptStackFrame) {
+    println!("Interrupt: Divide by zero");
 }
 
 pub extern "x86-interrupt" fn syscall_handler() {

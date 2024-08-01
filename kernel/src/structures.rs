@@ -1,4 +1,4 @@
-use crate::drivers::screen::framebuffer::Framebuffer;
+use crate::{acpi::rsdp::Rsdp, drivers::screen::framebuffer::Framebuffer};
 
 /// A structure representing a descriptor table pointer (GDTR, IDTR, LDTR, or TR)
 /// Format is suitable for direct loading into the corresponding x86 control register.
@@ -33,4 +33,5 @@ pub struct BootInfo {
     pub framebuffer: Framebuffer,          // Framebuffer information for the display.
     pub font: PSF1Font,                    // PSF1 font information for the display.
     pub kernel_end: u64,                   // Address of the end of the kernel.
+    pub rsdp: *const Rsdp,                 // Pointer to the RSDP ACPI table.
 }

@@ -5,9 +5,17 @@
 #![feature(core_intrinsics)] // enable core intrinsics
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 
+use acpi::rsdp;
+use apic::APIC;
 use core::{arch::asm, panic::PanicInfo};
-use drivers::screen::display::{self, DISPLAY};
-use interrupts::{isr, no_interrupts};
+use drivers::{
+    keyboard::KEYBOARD,
+    screen::display::{self, DISPLAY},
+};
+use interrupts::{
+    isr::{self, IDT, KEYBOARD_IRQ},
+    no_interrupts,
+};
 use memory::global_allocator::GlobalAllocator;
 use structures::BootInfo;
 use tasks::{
@@ -19,6 +27,9 @@ use tasks::{
 
 extern crate alloc;
 
+mod acpi;
+mod apic;
+mod arch;
 mod cpu;
 mod data_types;
 mod drivers;
@@ -56,7 +67,14 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             // initialize the memory
             memory::init(boot_info);
             tss::load_tss();
+
+            rsdp::init_rsdp(boot_info);
+            // apic::setup_apic();
+            println!("APIC initialized");
         });
+
+        apic::enable_apic_mode(); // enable the APIC mode
+        APIC.lock().enable_irq(KEYBOARD_IRQ as u8); // enable the keyboard interrupt
 
         test_proc();
     }

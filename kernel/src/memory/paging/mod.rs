@@ -14,7 +14,7 @@ use crate::{
 pub(crate) mod page_table_manager;
 pub(crate) mod table;
 
-pub(super) static mut PAGE_TABLE_MANAGER: Option<PageTableManager> = None;
+pub static mut PAGE_TABLE_MANAGER: Option<PageTableManager> = None;
 pub static mut ROOT_PAGE_TABLE: usize = 0;
 
 /// Initializes the page table manager with the boot information and a page frame allocator.
@@ -45,7 +45,7 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
 
     let mut frame_alloc = || page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
     for i in (0..total_memory).step_by(PAGE_SIZE) {
-        unsafe { pt_manager.map_memory(VirtAddr(i), PhysAddr(i), &mut frame_alloc, true) };
+        unsafe { pt_manager.map_memory(VirtAddr(i), PhysAddr(i), &mut frame_alloc, false) };
     }
 
     // Remap the framebuffer memory.
