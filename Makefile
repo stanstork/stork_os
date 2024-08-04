@@ -8,10 +8,11 @@ BOOTLOADER_BINARY := ${BUILD_DIR}/bootx64.efi
 DISK_IMG          := ${BUILD_DIR}/kernel.img
 DISK_IMG_SIZE     := 2880
 
-QEMU_FLAGS :=                                                \
-	-bios ${BOOTLOADER_DIR}/OVMF_CODE-pure-efi.fd                                            \
-    -drive if=none,id=uas-disk1,file=${DISK_IMG},format=raw    \
-    -device usb-storage,drive=uas-disk1                        \
+QEMU_FLAGS :=                                                  \
+	-bios ${BOOTLOADER_DIR}/OVMF_CODE-pure-efi.fd               \
+    -drive id=disk,file=${DISK_IMG},format=raw,if=none          \
+    -device ahci,id=ahci-controller                             \
+    -device ide-hd,drive=disk,bus=ahci-controller.0             \
     -serial stdio                                              \
     -usb                                                       \
     -net none                                                  \

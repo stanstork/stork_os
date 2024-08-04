@@ -8,15 +8,13 @@
 use acpi::rsdp;
 use apic::APIC;
 use core::{arch::asm, panic::PanicInfo};
-use drivers::{
-    keyboard::KEYBOARD,
-    screen::display::{self, DISPLAY},
-};
+use drivers::screen::display::{self, DISPLAY};
 use interrupts::{
-    isr::{self, IDT, KEYBOARD_IRQ},
+    isr::{self, KEYBOARD_IRQ},
     no_interrupts,
 };
 use memory::global_allocator::GlobalAllocator;
+use storage::ahci;
 use structures::BootInfo;
 use tasks::{
     process::Process,
@@ -36,7 +34,9 @@ mod drivers;
 mod gdt;
 mod interrupts;
 mod memory;
+mod pci;
 mod registers;
+mod storage;
 mod structures;
 mod sync;
 mod tasks;
@@ -76,7 +76,10 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         apic::enable_apic_mode(); // enable the APIC mode
         APIC.lock().enable_irq(KEYBOARD_IRQ as u8); // enable the keyboard interrupt
 
-        test_proc();
+        // test_proc();
+
+        pci::PCI::scan();
+        ahci::init();
     }
 
     loop {}
