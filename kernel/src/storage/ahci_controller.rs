@@ -1,5 +1,6 @@
-use core::ptr;
+use core::{ptr, u32};
 
+use alloc::vec::Vec;
 use bitfield_struct::bitfield;
 
 use crate::{
@@ -50,7 +51,61 @@ pub struct HbaPort {
     pub fis_switch_control: u32,
     pub device_sleep: u32,
     pub reserved1: [u32; 10],
-    pub vendor_specific: [u32; 4],
+    pub vendor_specific: [u32; 0],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DeviceSignature {
+    NONE = 0x00000000,
+    ATA = 0x00000101,
+    ATAPI = 0xeb140101,
+    ENCLOSURE_POWER_MANAGEMENT_BRIDGE = 0xc33c0101,
+    PORT_MULTIPLIER = 0x96690101,
+}
+
+const HBA_PxCMD_ST: u32 = 1 << 0; // Start bit
+const HBA_PxCMD_FRE: u32 = 1 << 4; // FIS Receive Enable
+const HBA_PxCMD_FR: u32 = 1 << 14; // FIS Receive Running
+const HBA_PxCMD_CR: u32 = 1 << 15; // Command List Running
+
+impl HbaPort {
+    pub fn get_type(&self) -> DeviceSignature {
+        match self.signature {
+            0x00000101 => DeviceSignature::ATA,
+            0xeb140101 => DeviceSignature::ATAPI,
+            0xc33c0101 => DeviceSignature::ENCLOSURE_POWER_MANAGEMENT_BRIDGE,
+            0x96690101 => DeviceSignature::PORT_MULTIPLIER,
+            _ => DeviceSignature::NONE,
+        }
+    }
+
+    pub fn stop_cmd(&mut self) {
+        // Clear ST (bit 0)
+        self.command &= !HBA_PxCMD_ST;
+
+        // Clear FRE (bit 4)
+        self.command &= !HBA_PxCMD_FRE;
+
+        // Wait until FR (bit 14) and CR (bit 15) are cleared
+        while {
+            let cmd = self.command;
+            (cmd & HBA_PxCMD_FR != 0) || (cmd & HBA_PxCMD_CR != 0)
+        } {
+            sleep_for(10); // Busy-wait or sleep for 10 milliseconds
+        }
+    }
+
+    pub fn start_cmd(&mut self) {
+        // Wait until CR (bit15) is cleared
+        while self.command & HBA_PxCMD_CR != 0 {
+            sleep_for(10); // Busy-wait or sleep for 10 milliseconds
+        }
+
+        // Set FRE (bit4) and ST (bit0)c
+        self.command |= HBA_PxCMD_FRE;
+        self.command |= HBA_PxCMD_ST;
+    }
 }
 
 #[bitfield(u32)]
@@ -91,117 +146,119 @@ pub struct AhciController {
     pub device: PciDevice,
     pub hba: HbaRegs,
     pub port_count: u32,
+    pub command_lists: Vec<HbaCommandHeader>,
 }
 
 pub const AHCI_ENABLE: u32 = 0x80000000;
 pub const AHCI_ENABLE_TIMEOUT: u32 = 100000;
 
 impl AhciController {
-    pub fn new(device: PciDevice) -> Self {
-        Self {
-            device,
-            hba: HbaRegs {
-                host_capabilities: 0,
-                global_host_control: 0,
-                interrupt_status: 0,
-                ports_implemented: 0,
-                version: 0,
-                ccc_control: 0,
-                ccc_ports: 0,
-                em_location: 0,
-                em_control: 0,
-                ext_capabilities: 0,
-                bohc: 0,
-                reserved: [0; 116],
-                vendor_specific: [0; 96],
-                ports: [HbaPort {
-                    command_list_base: 0,
-                    command_list_base_upper: 0,
-                    fis_base: 0,
-                    fis_base_upper: 0,
-                    interrupt_status: 0,
-                    interrupt_enable: 0,
-                    command: 0,
-                    reserved0: 0,
-                    task_file_data: 0,
-                    signature: 0,
-                    sata_status: 0,
-                    sata_control: 0,
-                    sata_error: 0,
-                    sata_active: 0,
-                    command_issue: 0,
-                    sata_notification: 0,
-                    fis_switch_control: 0,
-                    device_sleep: 0,
-                    reserved1: [0; 10],
-                    vendor_specific: [0; 4],
-                }; 1],
-            },
-            port_count: 0,
-        }
-    }
-
-    pub fn init(&mut self) {
-        let mut command = self.device.read_word(0x04);
+    pub fn init(device: PciDevice) {
+        let mut command = device.read_word(0x04);
         command |= 0x02; // Enable IO Space
         command |= 0x04; // Enable Bus Master
 
-        self.device.write_word(0x04, command);
+        device.write_word(0x04, command);
 
         // Get the AHCI Base Address
-        let abar = self.device.read_dword(0x24) & 0xFFFFFFF0;
+        let abar = device.read_dword(0x24) & 0xFFFFFFF0;
         println!("AHCI Base Address: {:X}", abar);
 
         // Map the AHCI Base Address to a virtual address
         memory::map_io(abar as u64);
 
         // Get the AHCI Controller Registers
-        self.hba = unsafe { *(abar as *mut HbaRegs) } as HbaRegs;
+        let mut hba = unsafe { *(abar as *mut HbaRegs) } as HbaRegs;
 
         println!(
             "AHCI Version: [{:X}.{:X}.{:X}]",
-            self.hba.version >> 16,
-            (self.hba.version >> 8) & 0xFF,
-            self.hba.version & 0xFF
+            hba.version >> 16,
+            (hba.version >> 8) & 0xFF,
+            hba.version & 0xFF
         );
 
-        if !self.enable() {
+        if !Self::enable(&mut hba) {
             return;
         }
 
-        self.hba.interrupt_status = 0xFFFFFFFF; // Clear pending interrupts
+        hba.interrupt_status = 0xFFFFFFFF; // Clear pending interrupts
 
         // Read maximum number of supported ports from lowest 5 bits of capabilities registers
-        self.port_count = (self.hba.host_capabilities & 0x1F) + 1;
+        let port_count = (hba.host_capabilities & 0x1F) + 1;
 
-        println!("AHCI Ports: {}", self.port_count);
+        println!("AHCI Ports: {}", port_count);
 
-        let mut pi = self.hba.ports_implemented;
+        let pi = hba.ports_implemented;
         println!("AHCI Ports Implemented: {:X}", pi);
 
-        for i in 0..self.port_count {
-            let port = &self.hba.ports[i as usize];
+        let max_ports = hba.ports.len() as u32;
 
-            if (port.sata_status & 0x0F) != 3 {
-                continue;
+        let mut commands_list: Vec<*mut HbaCommandHeader> =
+            alloc::vec![ptr::null_mut(); max_ports as usize];
+
+        for i in 0..max_ports {
+            if (pi & (1 << i)) != 0 {
+                let port = &mut hba.ports[i as usize];
+                let port_type = port.get_type();
+
+                if port_type == DeviceSignature::ATA || port_type == DeviceSignature::ATAPI {
+                    Self::rebase_port(port, i as usize, &mut commands_list);
+
+                    port.sata_error = 0xFFFFFFFF; // Clear SATA error register
+                    port.interrupt_status = 0xFFFFFFFF; // Clear pending interrupts
+                    port.interrupt_enable = 0; // Disable all port interrupts
+
+                    if port_type == DeviceSignature::ATA {
+                        println!("AHCI Port {} is an ATA device", i);
+                    } else if port_type == DeviceSignature::ATAPI {
+                        println!("AHCI Port {} is an ATAPI device", i);
+                    }
+                } else {
+                    match port_type {
+                        DeviceSignature::ENCLOSURE_POWER_MANAGEMENT_BRIDGE => {
+                            println!("AHCI Port {} is an Enclosure Management device", i);
+                        }
+                        DeviceSignature::PORT_MULTIPLIER => {
+                            println!("AHCI Port {} is a Port Multiplier device", i);
+                        }
+                        _ => {
+                            println!("AHCI Port {} is an unknown device", i);
+                        }
+                    }
+                    port.stop_cmd();
+                }
             }
-
-            println!("AHCI Port {} is a SATA drive", i);
         }
     }
 
-    fn enable(&mut self) -> bool {
+    fn rebase_port(
+        port: &mut HbaPort,
+        port_num: usize,
+        commands_list: &mut Vec<*mut HbaCommandHeader>,
+    ) {
+        println!("Rebasing port");
+        port.stop_cmd();
+
+        let phys_addr = memory::map_io_pages(1);
+        commands_list[port_num] = phys_addr as *mut HbaCommandHeader;
+
+        port.command_list_base = phys_addr as u32;
+
+        port.start_cmd();
+    }
+
+    fn enable(hba: &mut HbaRegs) -> bool {
         let mut time = 0;
 
         println!("Enabling AHCI");
-        self.hba.global_host_control |= AHCI_ENABLE;
+        hba.global_host_control |= AHCI_ENABLE;
 
-        while (self.hba.global_host_control & AHCI_ENABLE) == 0 && time < AHCI_ENABLE_TIMEOUT {
+        while (hba.global_host_control & AHCI_ENABLE) == 0 && time < AHCI_ENABLE_TIMEOUT {
             sleep_for(10);
             time += 10;
         }
 
-        if (self.hba.global_host_control & AHCI_ENABLE) == 0 {
+        if (hba.global_host_control & AHCI_ENABLE) == 0 {
             println!("Failed to enable AHCI");
             return false;
         }
