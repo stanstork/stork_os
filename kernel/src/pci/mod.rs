@@ -168,4 +168,34 @@ impl PCI {
 
         devices
     }
+
+    pub fn enable_interrupt_line(bus: u8, device: u8, function: u8) {
+        let command_offset = 0x04;
+        let interrupt_enable_bit = 0x400;
+
+        let command = PCI::read_word(bus, device, function, command_offset);
+
+        PCI::write_word(
+            bus,
+            device,
+            function,
+            command_offset,
+            command | interrupt_enable_bit,
+        );
+    }
+
+    pub fn enable_bus_mastering(bus: u8, device: u8, function: u8) {
+        let command_offset = 0x04;
+        let bus_master_bit = 0x4;
+
+        let command = PCI::read_word(bus, device, function, command_offset);
+
+        PCI::write_word(
+            bus,
+            device,
+            function,
+            command_offset,
+            command | bus_master_bit,
+        );
+    }
 }

@@ -25,4 +25,8 @@ impl PciDevice {
     pub fn read_dword(&self, reg: u8) -> u32 {
         PCI::read_dword(self.bus, self.device, self.function, reg)
     }
+
+    pub fn address(&self) -> u32 {
+        ((self.bus as u32) << 16) | ((self.device as u32) << 11) | ((self.function as u32) << 8)
+    }
 }

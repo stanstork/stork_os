@@ -4,6 +4,7 @@
 #![feature(naked_functions)] // enable naked functions
 #![feature(core_intrinsics)] // enable core intrinsics
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
+#![feature(str_from_raw_parts)] // enable str::from_raw_parts
 
 use acpi::rsdp;
 use apic::APIC;
