@@ -2,6 +2,7 @@ use super::ahci_controller::{AhciController, DeviceSignature};
 
 // https://forum.osdev.org/viewtopic.php?f=1&t=30118
 #[repr(C, packed)]
+#[derive(Clone, Copy)]
 pub struct SATAIdent {
     config: u16,                    // Lots of obsolete bit flags
     cyls: u16,                      // Obsolete

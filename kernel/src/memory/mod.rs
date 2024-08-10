@@ -170,3 +170,8 @@ pub fn map_io_pages(pages: usize) -> usize {
 
     start_addr.unwrap().0
 }
+
+pub fn allocate_dma_buffer(size: usize) -> u64 {
+    let pages = (size / PAGE_SIZE) + 1;
+    map_io_pages(pages) as u64
+}
