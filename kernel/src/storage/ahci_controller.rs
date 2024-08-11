@@ -1,7 +1,7 @@
 use crate::{
     cpu::io::sleep_for,
     memory::{self},
-    pci::device::PciDevice,
+    pci::device::{self, PciDevice},
     println,
     storage::ahci_device::SATAIdent,
 };
@@ -235,6 +235,35 @@ pub struct AhciController {
     pub command_lists: Vec<HbaCommandHeader>,
 }
 
+pub enum TransferMode {
+    Read,
+    Write,
+}
+
+impl Default for FisRegisterHostToDevice {
+    fn default() -> Self {
+        Self {
+            type_: FisType::REGISTER_HOST_TO_DEVICE,
+            flags: FisRegisterHostToDeviceType::new(),
+            command: 0,
+            feature_low: 0,
+            lba0: 0,
+            lba1: 0,
+            lba2: 0,
+            device: 0,
+            lba3: 0,
+            lba4: 0,
+            lba5: 0,
+            feature_high: 0,
+            count_low: 0,
+            count_high: 0,
+            isochronous_command_completion: 0,
+            control: 0,
+            reserved2: 0,
+        }
+    }
+}
+
 pub const AHCI_ENABLE: u32 = 0x80000000;
 pub const AHCI_ENABLE_TIMEOUT: u32 = 100000;
 const AHCI_BASE_ADDR_REG: u8 = 0x24;
@@ -317,7 +346,13 @@ impl AhciController {
         port.start_cmd();
     }
 
-    unsafe fn identify_device(hba: *mut HbaRegs, port_no: usize) -> Option<SATAIdent> {
+    unsafe fn read_from_device(
+        hba: *mut HbaRegs,
+        port_no: usize,
+        command_fis: FisRegisterHostToDevice,
+        prdt_len: u16,
+        buffer_size: usize,
+    ) -> Option<u64> {
         let port = &mut (*hba).ports[port_no];
         let slot = Self::find_cmd_slot(port);
 
@@ -326,13 +361,13 @@ impl AhciController {
                 + (slot as u64 * size_of::<HbaCommandHeader>() as u64))
                 as *mut HbaCommandHeader);
 
-            let buf_phys_addr = memory::allocate_dma_buffer(512);
+            let buf_phys_addr = memory::allocate_dma_buffer(buffer_size);
             cmd_header.command_table_base = buf_phys_addr as u32;
             cmd_header.command_table_base_upper = (buf_phys_addr >> 32) as u32;
             cmd_header.dword0.set_command_fis_length(
                 (size_of::<FisRegisterHostToDevice>() / size_of::<u32>()) as u8,
             );
-            cmd_header.dword0.set_prdt_length(1);
+            cmd_header.dword0.set_prdt_length(prdt_len);
 
             let cmd_tbl = &mut *((cmd_header.command_table_base as u64
                 + cmd_header.command_table_base_upper as u64)
@@ -343,45 +378,55 @@ impl AhciController {
                 data_base_address_upper: (buf_phys_addr >> 32) as u32,
                 reserved1: 0,
                 data_byte_count_reserved2_interrupt: DataByteCountReserved2Interrupt::new()
-                    .with_data_byte_count(512)
+                    .with_data_byte_count(buffer_size as u32)
                     .with_reserved2(0)
                     .with_interrupt_on_completion(0),
             };
 
             let fis = cmd_tbl.command_fis.as_ptr() as *mut FisRegisterHostToDevice;
-            (*fis).type_ = FisType::REGISTER_HOST_TO_DEVICE;
-            (*fis).flags = FisRegisterHostToDeviceType::new()
+            fis.write_volatile(command_fis);
+
+            Self::issue_command(port_no, hba, slot);
+
+            Some(buf_phys_addr)
+        } else {
+            None
+        }
+    }
+
+    unsafe fn issue_command(port_no: usize, hba: *mut HbaRegs, slot: u8) {
+        let port = &mut (*hba).ports[port_no];
+        port.command_issue = 1 << slot;
+
+        let mut timeout = 100_000;
+        while (port.command_issue & (1 << slot)) != 0 && timeout > 0 {
+            sleep_for(10);
+            timeout -= 10;
+        }
+    }
+
+    unsafe fn identify_device(hba: *mut HbaRegs, port_no: usize) -> Option<SATAIdent> {
+        let command_fis = FisRegisterHostToDevice {
+            type_: FisType::REGISTER_HOST_TO_DEVICE,
+            flags: FisRegisterHostToDeviceType::new()
                 .with_port_multiplier_port(0)
                 .with_reserved1(0)
-                .with_command_control(true);
-            (*fis).command = Command::ATA_IDENTIFY as u8;
-            (*fis).device = 0;
-            (*fis).lba0 = 0;
-            (*fis).lba1 = 0;
-            (*fis).lba2 = 0;
-            (*fis).lba3 = 0;
-            (*fis).lba4 = 0;
-            (*fis).lba5 = 0;
-            (*fis).control = 0;
+                .with_command_control(true),
+            command: Command::ATA_IDENTIFY as u8,
+            ..Default::default()
+        };
 
-            port.command_issue = 1 << slot;
+        // Send the command and read the result
+        let identity = Self::read_from_device(hba, port_no, command_fis, 1, 512)
+            .map(|buf_phys_addr| *(buf_phys_addr as *mut SATAIdent));
 
-            let mut timeout = 100_000;
-            while (port.command_issue & (1 << slot)) != 0 && timeout > 0 {
-                sleep_for(10);
-                timeout -= 10;
-            }
-
-            let identity = buf_phys_addr as *mut SATAIdent;
-
-            Self::byte_swap_string(&mut (*identity).serial_no);
-            Self::byte_swap_string(&mut (*identity).model);
-            Self::byte_swap_string(&mut (*identity).fw_rev);
-
-            return Some(*identity);
-        }
-
-        None
+        // If the identity structure is successfully read, swap the strings and return
+        identity.map(|mut identity| {
+            Self::byte_swap_string(&mut identity.serial_no);
+            Self::byte_swap_string(&mut identity.model);
+            Self::byte_swap_string(&mut identity.fw_rev);
+            identity
+        })
     }
 
     fn byte_swap_string(string: &mut [u8]) {
@@ -420,5 +465,17 @@ impl AhciController {
 
         println!("AHCI enabled");
         true
+    }
+
+    unsafe fn perform_ata_io(
+        hba: *mut HbaRegs,
+        port_no: usize,
+        device: &SATAIdent,
+        mode: TransferMode,
+        buffer: &mut [u8],
+        start_sector: u64,
+        sector_count: u32,
+    ) {
+        // let fis =
     }
 }
