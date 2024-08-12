@@ -1,4 +1,4 @@
-use super::ahci_controller::{AhciController, DeviceSignature};
+use super::{ahci::AHCI_CONTROLLER, ahci_controller::DeviceSignature};
 
 // https://forum.osdev.org/viewtopic.php?f=1&t=30118
 #[repr(C, packed)]
@@ -9,7 +9,7 @@ pub struct SATAIdent {
     reserved2: u16,                 // Special (word 2)
     heads: u16,                     // Physical heads
     track_bytes: u16,               // Unformatted bytes per track
-    sector_bytes: u16,              // Unformatted bytes per sector
+    pub sector_bytes: u16,          // Unformatted bytes per sector
     sectors: u16,                   // Physical sectors per track
     vendor0: u16,                   // Vendor unique
     vendor1: u16,                   // Vendor unique
@@ -111,7 +111,29 @@ pub struct SATAIdent {
 }
 
 pub struct AhciDevice {
-    pub port: u8,
-    pub controller: &'static AhciController,
+    pub port_no: usize,
     pub signature: DeviceSignature,
+    pub sata_ident: SATAIdent,
+}
+
+impl AhciDevice {
+    pub fn new(port_no: usize, signature: DeviceSignature, sata_ident: SATAIdent) -> Self {
+        AhciDevice {
+            port_no,
+            signature,
+            sata_ident,
+        }
+    }
+
+    pub fn read(&self, buffer: *mut u8, start_sector: u64, sectors_count: u64) {
+        unsafe {
+            AHCI_CONTROLLER.lock().as_mut().unwrap().read(
+                self.port_no,
+                &self.sata_ident,
+                buffer,
+                start_sector,
+                sectors_count,
+            )
+        };
+    }
 }

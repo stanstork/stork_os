@@ -14,6 +14,20 @@ pub struct PciDevice {
 }
 
 impl PciDevice {
+    pub const fn default() -> Self {
+        PciDevice {
+            bus: 0,
+            device: 0,
+            function: 0,
+            vendor_id: 0,
+            device_id: 0,
+            revision: 0,
+            prog_if: 0,
+            class: 0,
+            subclass: 0,
+        }
+    }
+
     pub fn read_word(&self, reg: u8) -> u16 {
         PCI::read_word(self.bus, self.device, self.function, reg)
     }

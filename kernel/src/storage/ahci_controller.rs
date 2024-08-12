@@ -3,7 +3,11 @@ use crate::{
     memory::{self},
     pci::device::{self, PciDevice},
     println,
-    storage::ahci_device::SATAIdent,
+    storage::{
+        ahci,
+        ahci_device::{AhciDevice, SATAIdent},
+    },
+    sync::mutex::SpinMutex,
 };
 use alloc::vec::Vec;
 use bitfield_struct::bitfield;
@@ -230,14 +234,7 @@ pub struct HbaCommandTable {
 
 pub struct AhciController {
     pub device: PciDevice,
-    pub hba: HbaRegs,
-    pub port_count: u32,
-    pub command_lists: Vec<HbaCommandHeader>,
-}
-
-pub enum TransferMode {
-    Read,
-    Write,
+    pub hba: *mut HbaRegs,
 }
 
 impl Default for FisRegisterHostToDevice {
@@ -269,7 +266,7 @@ pub const AHCI_ENABLE_TIMEOUT: u32 = 100000;
 const AHCI_BASE_ADDR_REG: u8 = 0x24;
 
 impl AhciController {
-    pub unsafe fn initialize_ahci_controller(device: PciDevice) {
+    pub unsafe fn init(device: PciDevice) -> Self {
         // Read the AHCI Base Address Register (ABAR)
         let abar = device.read_dword(AHCI_BASE_ADDR_REG) & 0xFFFFFFFC;
         // Map the AHCI Base Address Register (ABAR) to a virtual address
@@ -319,9 +316,15 @@ impl AhciController {
                     core::str::from_utf8(&identity.fw_rev).unwrap().trim()
                 );
 
-                let sectors = identity.lba_capacity * 512;
+                let sector_bytes = identity.sector_bytes as u64;
+                println!("Sector Size: {} bytes", sector_bytes);
+
+                let sectors = identity.lba_capacity as u64 * sector_bytes;
                 let size = sectors / 1024 / 1024;
                 println!("Size: {} Mb", size);
+
+                let ahci_device = AhciDevice::new(i as usize, DeviceSignature::ATA, identity);
+                ahci::AHCI_DEVICES.lock().push(ahci_device);
             } else {
                 println!(
                     "AHCI Port {} is an unknown or unsupported device type: {:?}",
@@ -329,6 +332,11 @@ impl AhciController {
                 );
                 port.stop_cmd();
             }
+        }
+
+        Self {
+            device,
+            hba: hba_ptr,
         }
     }
 
@@ -467,15 +475,45 @@ impl AhciController {
         true
     }
 
-    unsafe fn perform_ata_io(
-        hba: *mut HbaRegs,
+    pub unsafe fn read(
+        &self,
         port_no: usize,
-        device: &SATAIdent,
-        mode: TransferMode,
-        buffer: &mut [u8],
+        sat_ident: &SATAIdent,
+        buffer: *mut u8,
         start_sector: u64,
-        sector_count: u32,
+        sector_count: u64,
     ) {
-        // let fis =
+        // Create a FIS register host to device command
+        let command_fis = FisRegisterHostToDevice {
+            type_: FisType::REGISTER_HOST_TO_DEVICE,
+            flags: FisRegisterHostToDeviceType::new()
+                .with_port_multiplier_port(0)
+                .with_reserved1(0)
+                .with_command_control(true),
+            command: Command::ATA_READ as u8,
+            device: 1 << 6, // LBA mode
+            feature_low: 0, // DMA mode
+            lba0: (start_sector & 0xFF) as u8,
+            lba1: ((start_sector >> 8) & 0xFF) as u8,
+            lba2: ((start_sector >> 16) & 0xFF) as u8,
+            lba3: (start_sector >> 24) as u8,
+            count_low: (sector_count & 0xff) as u8,
+            count_high: ((sector_count >> 8) & 0xff) as u8,
+            ..Default::default()
+        };
+
+        // Send the command and read data from the device
+        if let Some(dma_buffer) = Self::read_from_device(
+            self.hba,
+            port_no,
+            command_fis,
+            1,
+            (sector_count * 512) as usize,
+        ) {
+            // Copy the data from the DMA buffer to the provided buffer
+            let sector_bytes = sat_ident.sector_bytes as u64;
+            let data_size = (sector_count * sector_bytes) as usize;
+            buffer.copy_from(dma_buffer as *const u8, data_size);
+        }
     }
 }

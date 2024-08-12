@@ -158,15 +158,13 @@ impl PCI {
         }
     }
 
-    pub fn search_devices(class: u8, subclass: u8) -> Vec<PciDevice> {
-        let mut devices = Vec::new();
+    pub fn search_device(class: u8, subclass: u8) -> Option<PciDevice> {
         for device in unsafe { DEVICES.iter() } {
             if device.class == class && device.subclass == subclass {
-                devices.push(device.clone());
+                return Some(*device);
             }
         }
-
-        devices
+        None
     }
 
     pub fn enable_interrupt_line(bus: u8, device: u8, function: u8) {
