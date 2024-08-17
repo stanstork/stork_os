@@ -42,7 +42,7 @@ kernel: ${KERNEL_BINARY}
 
 ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} 
 	# Create UEFI boot disk image in DOS format.
-	dd if=/dev/zero of=${DISK_IMG} bs=512 count=93750
+	dd if=/dev/zero of=${DISK_IMG} bs=1M count=512
 	mformat -i ${DISK_IMG} -F ::
 	mmd -i ${DISK_IMG} ::/EFI
 	mmd -i ${DISK_IMG} ::/EFI/BOOT

@@ -110,6 +110,7 @@ pub struct SATAIdent {
     integrity: u16,          // Integrity word
 }
 
+#[derive(Clone, Copy)]
 pub struct AhciDevice {
     pub port_no: usize,
     pub signature: DeviceSignature,
@@ -130,6 +131,17 @@ impl AhciDevice {
             AHCI_CONTROLLER.lock().as_mut().unwrap().read(
                 self.port_no,
                 &self.sata_ident,
+                buffer,
+                start_sector,
+                sectors_count,
+            )
+        };
+    }
+
+    pub fn write(&self, buffer: *mut u8, start_sector: u64, sectors_count: u64) {
+        unsafe {
+            AHCI_CONTROLLER.lock().as_mut().unwrap().write(
+                self.port_no,
                 buffer,
                 start_sector,
                 sectors_count,

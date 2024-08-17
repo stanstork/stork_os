@@ -354,17 +354,15 @@ impl AhciController {
         port.start_cmd();
     }
 
-    unsafe fn read_from_device(
+    unsafe fn setup_command(
         hba: *mut HbaRegs,
         port_no: usize,
         command_fis: FisRegisterHostToDevice,
         prdt_len: u16,
         buffer_size: usize,
-    ) -> Option<u64> {
+    ) -> Option<(*mut HbaCommandHeader, u64)> {
         let port = &mut (*hba).ports[port_no];
-        let slot = Self::find_cmd_slot(port);
-
-        if let Some(slot) = slot {
+        if let Some(slot) = Self::find_cmd_slot(port) {
             let cmd_header = &mut *((port.command_list_base as u64
                 + (slot as u64 * size_of::<HbaCommandHeader>() as u64))
                 as *mut HbaCommandHeader);
@@ -394,11 +392,46 @@ impl AhciController {
             let fis = cmd_tbl.command_fis.as_ptr() as *mut FisRegisterHostToDevice;
             fis.write_volatile(command_fis);
 
-            Self::issue_command(port_no, hba, slot);
+            Some((cmd_header, buf_phys_addr))
+        } else {
+            None
+        }
+    }
 
+    unsafe fn read_from_device(
+        hba: *mut HbaRegs,
+        port_no: usize,
+        command_fis: FisRegisterHostToDevice,
+        prdt_len: u16,
+        buffer_size: usize,
+    ) -> Option<u64> {
+        if let Some((_, buf_phys_addr)) =
+            Self::setup_command(hba, port_no, command_fis, prdt_len, buffer_size)
+        {
+            let slot = Self::find_cmd_slot(&mut (*hba).ports[port_no]).unwrap();
+            Self::issue_command(port_no, hba, slot);
             Some(buf_phys_addr)
         } else {
             None
+        }
+    }
+
+    unsafe fn write_to_device(
+        hba: *mut HbaRegs,
+        port_no: usize,
+        command_fis: FisRegisterHostToDevice,
+        prdt_len: u16,
+        buffer_size: usize,
+        buffer: *const u8,
+    ) {
+        if let Some((_, buf_phys_addr)) =
+            Self::setup_command(hba, port_no, command_fis, prdt_len, buffer_size)
+        {
+            let slot = Self::find_cmd_slot(&mut (*hba).ports[port_no]).unwrap();
+            let buffer = buffer as *mut u8;
+            buffer.copy_to(buf_phys_addr as *mut u8, buffer_size);
+
+            Self::issue_command(port_no, hba, slot);
         }
     }
 
@@ -475,22 +508,18 @@ impl AhciController {
         true
     }
 
-    pub unsafe fn read(
-        &self,
-        port_no: usize,
-        sat_ident: &SATAIdent,
-        buffer: *mut u8,
+    unsafe fn create_fis_register_command(
+        command: Command,
         start_sector: u64,
         sector_count: u64,
-    ) {
-        // Create a FIS register host to device command
-        let command_fis = FisRegisterHostToDevice {
+    ) -> FisRegisterHostToDevice {
+        FisRegisterHostToDevice {
             type_: FisType::REGISTER_HOST_TO_DEVICE,
             flags: FisRegisterHostToDeviceType::new()
                 .with_port_multiplier_port(0)
                 .with_reserved1(0)
                 .with_command_control(true),
-            command: Command::ATA_READ as u8,
+            command: command as u8,
             device: 1 << 6, // LBA mode
             feature_low: 0, // DMA mode
             lba0: (start_sector & 0xFF) as u8,
@@ -500,20 +529,51 @@ impl AhciController {
             count_low: (sector_count & 0xff) as u8,
             count_high: ((sector_count >> 8) & 0xff) as u8,
             ..Default::default()
-        };
+        }
+    }
 
-        // Send the command and read data from the device
-        if let Some(dma_buffer) = Self::read_from_device(
+    pub unsafe fn read(
+        &self,
+        port_no: usize,
+        sat_ident: &SATAIdent,
+        buffer: *mut u8,
+        start_sector: u64,
+        sector_count: u64,
+    ) {
+        let command_fis =
+            Self::create_fis_register_command(Command::ATA_READ, start_sector, sector_count);
+        let dma_buffer = Self::read_from_device(
             self.hba,
             port_no,
             command_fis,
             1,
             (sector_count * 512) as usize,
-        ) {
-            // Copy the data from the DMA buffer to the provided buffer
+        );
+
+        if let Some(dma_buffer) = dma_buffer {
             let sector_bytes = sat_ident.sector_bytes as u64;
             let data_size = (sector_count * sector_bytes) as usize;
             buffer.copy_from(dma_buffer as *const u8, data_size);
         }
+    }
+
+    pub unsafe fn write(
+        &self,
+        port_no: usize,
+        buffer: *const u8,
+        start_sector: u64,
+        sector_count: u64,
+    ) {
+        let command_fis =
+            Self::create_fis_register_command(Command::ATA_WRITE, start_sector, sector_count);
+
+        Self::write_to_device(
+            self.hba,
+            port_no,
+            command_fis,
+            1,
+            (sector_count * 512) as usize,
+            buffer,
+        );
     }
 }

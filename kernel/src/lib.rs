@@ -7,10 +7,14 @@
 #![feature(str_from_raw_parts)] // enable str::from_raw_parts
 
 use acpi::rsdp;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use apic::APIC;
-use core::{arch::asm, panic::PanicInfo};
+use core::{arch::asm, mem::size_of, panic::PanicInfo};
 use drivers::screen::display::{self, DISPLAY};
-use fs::fat32_driver::FAT32_BootSector;
+use fs::fat32::{fat32_driver::CLUSTER_LAST, DirectoryEntry};
 use interrupts::{
     isr::{self, KEYBOARD_IRQ},
     no_interrupts,
@@ -83,12 +87,22 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
         pci::PCI::scan();
         ahci::init();
-        let ahci_device = &AHCI_DEVICES.lock()[0];
-        let buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        ahci_device.read(buffer, 0, 1);
-        let boot_sector = buffer as *const FAT32_BootSector;
 
-        println!("Boot Sector: {:?}", *boot_sector);
+        let ahci_device = &AHCI_DEVICES.lock()[0];
+        let mut vfs = fs::VirtualFileSystem::new();
+        vfs.mount(
+            ahci_device.clone(),
+            String::from("/"),
+            String::from("FAT32"),
+        );
+
+        let driver = vfs.get_driver("/").unwrap();
+        let entries = driver.get_dir_entries(driver.fs.root_dir_cluster);
+
+        println!("Root directory entries:");
+        for entry in entries {
+            println!("  {}", entry.name);
+        }
     }
 
     loop {}
