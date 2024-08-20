@@ -2,7 +2,7 @@ use crate::{
     cpu::io::sleep_for,
     memory::{self},
     pci::device::{self, PciDevice},
-    println,
+    print, println,
     storage::{
         ahci,
         ahci_device::{AhciDevice, SATAIdent},
@@ -74,6 +74,7 @@ pub enum Command {
     ATA_IDENTIFY = 0xEC,
     ATA_READ = 0x25,
     ATA_WRITE = 0x35,
+    ATA_FLUSH_CACHE = 0xE7,
 }
 
 #[bitfield(u8)]
@@ -419,24 +420,104 @@ impl AhciController {
     unsafe fn write_to_device(
         hba: *mut HbaRegs,
         port_no: usize,
-        command_fis: FisRegisterHostToDevice,
-        prdt_len: u16,
         buffer_size: usize,
         buffer: *const u8,
+        sector: u64,
+        sector_count: u64,
     ) {
-        if let Some((_, buf_phys_addr)) =
-            Self::setup_command(hba, port_no, command_fis, prdt_len, buffer_size)
-        {
-            let slot = Self::find_cmd_slot(&mut (*hba).ports[port_no]).unwrap();
-            let buffer = buffer as *mut u8;
-            buffer.copy_to(buf_phys_addr as *mut u8, buffer_size);
+        let fis = FisRegisterHostToDevice {
+            type_: FisType::REGISTER_HOST_TO_DEVICE,
+            flags: FisRegisterHostToDeviceType::new()
+                .with_port_multiplier_port(0)
+                .with_reserved1(0)
+                .with_command_control(true),
+            command: Command::ATA_WRITE as u8,
+            device: 1 << 6, // LBA mode
+            feature_low: 1, // DMA mode
+            lba0: (sector & 0xFF) as u8,
+            lba1: ((sector >> 8) & 0xFF) as u8,
+            lba2: ((sector >> 16) & 0xFF) as u8,
+            lba3: (sector >> 24) as u8,
+            count_low: (sector_count & 0xff) as u8,
+            count_high: ((sector_count >> 8) & 0xff) as u8,
+            control: 1,
+            ..Default::default()
+        };
 
-            Self::issue_command(port_no, hba, slot);
+        let dma_size = sector_count * 512;
+        let dma_buffer = memory::allocate_dma_buffer(dma_size as usize) as *mut u8;
+        dma_buffer.copy_from(buffer, dma_size as usize);
+
+        let port = &mut (*hba).ports[port_no];
+        let slot = Self::find_cmd_slot(port).unwrap();
+
+        let cmd_header = &mut *((port.command_list_base as u64
+            + (slot as u64 * size_of::<HbaCommandHeader>() as u64))
+            as *mut HbaCommandHeader);
+
+        let buf_phys_addr = memory::allocate_dma_buffer(buffer_size);
+        cmd_header.command_table_base = buf_phys_addr as u32;
+        cmd_header.command_table_base_upper = (buf_phys_addr >> 32) as u32;
+        cmd_header.dword0.set_command_fis_length(
+            (size_of::<FisRegisterHostToDevice>() / size_of::<u32>()) as u8,
+        );
+
+        let cmd_tbl = &mut *((cmd_header.command_table_base as u64
+            + cmd_header.command_table_base_upper as u64)
+            as *mut HbaCommandTable);
+
+        cmd_tbl.physical_region_descriptor_table[0] = HbaPhysicalRegionDescriptorTableEntry {
+            data_base_address: dma_buffer as u32,
+            data_base_address_upper: (dma_buffer as u64 >> 32) as u32,
+            reserved1: 0,
+            data_byte_count_reserved2_interrupt: DataByteCountReserved2Interrupt::new()
+                .with_data_byte_count(dma_size as u32)
+                .with_reserved2(0)
+                .with_interrupt_on_completion(0),
+        };
+
+        let cmd_fis = cmd_tbl.command_fis.as_ptr() as *mut FisRegisterHostToDevice;
+        cmd_fis.write_volatile(fis);
+
+        port.command_issue = 1 << slot;
+
+        let mut timeout = 100_000;
+        while (port.command_issue & (1 << slot)) != 0 && timeout > 0 {
+            sleep_for(10);
+            timeout -= 10;
         }
+
+        println!("Write completed");
+    }
+
+    unsafe fn create_cmd_tbl(buffer_size: usize, buffer: *const u8) -> *mut HbaCommandTable {
+        let cmd_tbl_phys_addr = memory::allocate_dma_buffer(size_of::<HbaCommandTable>());
+        let cmd_tbl = &mut *((cmd_tbl_phys_addr as u64) as *mut HbaCommandTable);
+
+        let descriptors = buffer_size / 4096 + 1;
+        for i in 0..descriptors {
+            let data_phys_addr = memory::allocate_dma_buffer(4096);
+            let data = &mut *((data_phys_addr as u64) as *mut [u8; 4096]);
+            data.copy_from_slice(core::slice::from_raw_parts(buffer.add(i * 4096), 4096));
+
+            cmd_tbl.physical_region_descriptor_table[i] = HbaPhysicalRegionDescriptorTableEntry {
+                data_base_address: data_phys_addr as u32,
+                data_base_address_upper: (data_phys_addr >> 32) as u32,
+                reserved1: 0,
+                data_byte_count_reserved2_interrupt: DataByteCountReserved2Interrupt::new()
+                    .with_data_byte_count(4096)
+                    .with_reserved2(0)
+                    .with_interrupt_on_completion(0),
+            };
+        }
+
+        cmd_tbl
     }
 
     unsafe fn issue_command(port_no: usize, hba: *mut HbaRegs, slot: u8) {
         let port = &mut (*hba).ports[port_no];
+        port.sata_error = 0xFFFF_FFFF;
+
         port.command_issue = 1 << slot;
 
         let mut timeout = 100_000;
@@ -521,13 +602,14 @@ impl AhciController {
                 .with_command_control(true),
             command: command as u8,
             device: 1 << 6, // LBA mode
-            feature_low: 0, // DMA mode
+            feature_low: 1, // DMA mode
             lba0: (start_sector & 0xFF) as u8,
             lba1: ((start_sector >> 8) & 0xFF) as u8,
             lba2: ((start_sector >> 16) & 0xFF) as u8,
             lba3: (start_sector >> 24) as u8,
             count_low: (sector_count & 0xff) as u8,
             count_high: ((sector_count >> 8) & 0xff) as u8,
+            control: 1,
             ..Default::default()
         }
     }
@@ -564,16 +646,66 @@ impl AhciController {
         start_sector: u64,
         sector_count: u64,
     ) {
-        let command_fis =
-            Self::create_fis_register_command(Command::ATA_WRITE, start_sector, sector_count);
-
         Self::write_to_device(
             self.hba,
             port_no,
-            command_fis,
-            1,
             (sector_count * 512) as usize,
             buffer,
+            start_sector,
+            sector_count,
         );
+        println!("Start sector: {}", start_sector);
+    }
+
+    pub unsafe fn flush(&self, port_no: usize) {
+        let port = &mut (*self.hba).ports[port_no];
+        let command_fis = FisRegisterHostToDevice {
+            type_: FisType::REGISTER_HOST_TO_DEVICE,
+            flags: FisRegisterHostToDeviceType::new()
+                .with_port_multiplier_port(0)
+                .with_reserved1(0)
+                .with_command_control(true),
+            command: Command::ATA_FLUSH_CACHE as u8,
+            ..Default::default()
+        };
+
+        let slot = Self::find_cmd_slot(port).unwrap();
+        let cmd_header = &mut *((port.command_list_base as u64
+            + (slot as u64 * size_of::<HbaCommandHeader>() as u64))
+            as *mut HbaCommandHeader);
+
+        let buf_phys_addr = memory::allocate_dma_buffer(512);
+        cmd_header.command_table_base = buf_phys_addr as u32;
+        cmd_header.command_table_base_upper = (buf_phys_addr >> 32) as u32;
+        cmd_header.dword0.set_command_fis_length(
+            (size_of::<FisRegisterHostToDevice>() / size_of::<u32>()) as u8,
+        );
+
+        let cmd_tbl = &mut *((cmd_header.command_table_base as u64
+            + cmd_header.command_table_base_upper as u64)
+            as *mut HbaCommandTable);
+
+        cmd_tbl.physical_region_descriptor_table[0] = HbaPhysicalRegionDescriptorTableEntry {
+            data_base_address: 0,
+            data_base_address_upper: 0,
+            reserved1: 0,
+            data_byte_count_reserved2_interrupt: DataByteCountReserved2Interrupt::new()
+                .with_data_byte_count(0)
+                .with_reserved2(0)
+                .with_interrupt_on_completion(0),
+        };
+
+        let cmd_fis = cmd_tbl.command_fis.as_ptr() as *mut FisRegisterHostToDevice;
+        cmd_fis.write_volatile(command_fis);
+
+        port.command_issue = 1 << slot;
+
+        let mut timeout = 100_000;
+        while (port.command_issue & (1 << slot)) != 0 && timeout > 0 {
+            sleep_for(10);
+            timeout -= 10;
+        }
+
+        println!("Flush completed");
     }
 }

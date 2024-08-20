@@ -96,16 +96,51 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             String::from("FAT32"),
         );
 
-        let driver = vfs.get_driver("/").unwrap();
-        let entries = driver.get_dir_entries(driver.fs.root_dir_cluster);
+        let buffer = memory::allocate_dma_buffer(512) as *mut u8;
+        let fat_driver = vfs.get_driver("/").unwrap();
+        fat_driver.read_file("test.txt", buffer);
+        let size = fat_driver.size("test.txt");
 
+        print_buffer_text(buffer, size.unwrap());
+
+        println!();
+
+        let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
         println!("Root directory entries:");
         for entry in entries {
-            println!("  {}", entry.name);
+            println!("Name: {}", entry.name);
+        }
+
+        fat_driver.write_file("test2.txt", buffer, true);
+
+        let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
+        println!("Root directory entries:");
+        for entry in entries {
+            println!("Name: {}", entry.name);
         }
     }
 
     loop {}
+}
+
+pub fn print_buffer_text(buffer: *mut u8, length: usize) {
+    // Convert the raw pointer to a slice
+    let buffer_slice = unsafe { core::slice::from_raw_parts(buffer, length) };
+
+    // Try to convert the slice to a String
+    match core::str::from_utf8(buffer_slice) {
+        Ok(text) => {
+            println!("{}", text); // Print valid UTF-8 text
+        }
+        Err(_) => {
+            // Handle non-UTF-8 data by printing a replacement character for invalid sequences
+            let valid_text = buffer_slice
+                .iter()
+                .map(|&b| if b.is_ascii() { b as char } else { '?' }) // Replace non-ASCII with '�'
+                .collect::<String>();
+            println!("{}", valid_text);
+        }
+    }
 }
 
 // this function is called on panic

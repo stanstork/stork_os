@@ -1,7 +1,10 @@
+use core::pin;
+
 use crate::storage::ahci_device::AhciDevice;
 use alloc::{
     collections::btree_map::BTreeMap,
     string::{String, ToString},
+    vec::Vec,
 };
 use fat32::fat32_driver::FatDriver;
 
@@ -49,5 +52,39 @@ impl VirtualFileSystem {
 
     pub fn get_driver(&self, path: &str) -> Option<&FatDriver> {
         self.mount_points.get(path)
+    }
+
+    pub fn read(&self, path: &str, buffer: *mut u8) {}
+
+    pub fn write(&self, path: &str, data: &[u8]) -> Option<usize> {
+        todo!("Implement write");
+    }
+
+    pub fn exists(&self, path: &str) -> bool {
+        todo!("Implement exists");
+    }
+
+    pub fn create(&self, path: &str) -> Option<crate::fs::node::VfsEntry> {
+        todo!("Implement create");
+    }
+
+    pub fn mkdir(&self, path: &str) -> Option<crate::fs::node::VfsEntry> {
+        todo!("Implement mkdir");
+    }
+
+    pub fn rm(&self, path: &str) -> bool {
+        todo!("Implement rm");
+    }
+
+    pub fn rmdir(&self, path: &str) -> bool {
+        todo!("Implement rmdir");
+    }
+
+    pub fn ls(&self, path: &str) -> Option<Vec<crate::fs::node::VfsEntry>> {
+        todo!("Implement ls");
+    }
+
+    pub fn size(&self, path: &str) -> Option<usize> {
+        todo!("Implement size");
     }
 }

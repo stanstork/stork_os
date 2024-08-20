@@ -79,3 +79,18 @@ pub struct Fat32FsInfo {
     pub reserved1: [u8; 12],
     pub trail_signature: u32,
 }
+
+impl Default for LongDirectoryEntry {
+    fn default() -> Self {
+        Self {
+            order: 0,
+            name1: [0; 5],
+            attributes: 0,
+            reserved1: 0,
+            checksum: 0,
+            name2: [0; 6],
+            reserved2: 0,
+            name3: [0; 2],
+        }
+    }
+}

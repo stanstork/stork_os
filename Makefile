@@ -50,6 +50,7 @@ ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY}
 	mcopy -i ${DISK_IMG} ${BOOTLOADER_BINARY} ::/efi/boot/bootx64.efi
 	mcopy -i ${DISK_IMG} assets/fonts/zap-light16.psf ::/zap-light16.psf
 	mcopy -i ${DISK_IMG} ${KERNEL_BINARY} ::/kernel.elf
+	mcopy -i ${DISK_IMG} assets/fsdata/test.txt ::/test.txt
 
 ${BOOTLOADER_BINARY}:
 	make -C ${BOOTLOADER_DIR}

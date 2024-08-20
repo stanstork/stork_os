@@ -1,3 +1,5 @@
+use crate::{memory, print, println};
+
 use super::{ahci::AHCI_CONTROLLER, ahci_controller::DeviceSignature};
 
 // https://forum.osdev.org/viewtopic.php?f=1&t=30118
@@ -147,5 +149,16 @@ impl AhciDevice {
                 sectors_count,
             )
         };
+
+        let check_buffer = memory::allocate_dma_buffer(512) as *mut u8;
+        self.read(check_buffer, start_sector, sectors_count);
+
+        // Dump the buffer to the screen
+        // for i in 0..512 {
+        //     print!("{:02X} ", unsafe { *check_buffer.add(i) });
+        //     if i % 16 == 15 {
+        //         println!();
+        //     }
+        // }
     }
 }
