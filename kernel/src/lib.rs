@@ -111,7 +111,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             println!("Name: {}", entry.name);
         }
 
-        fat_driver.write_file("test2.txt", buffer, true);
+        fat_driver.write_file("very_long_name_test2.txt", buffer, true);
 
         let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
         println!("Root directory entries:");

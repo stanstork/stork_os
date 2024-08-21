@@ -347,75 +347,85 @@ impl FatDriver {
             return;
         }
 
-        let required_entries = 1; // Only one entry needed for the short name
+        // Generate the short filename
+        let short_name = self.create_short_filename(name);
+        println!("Short filename: {:?}", short_name);
+
+        // Calculate the checksum for the short filename
+        let checksum = self.calculate_checksum(&short_name);
+        println!("Checksum: 0x{:02X}", checksum);
+
+        // Generate LFN entries
+        let lfn_entries = Self::create_lfn_entries(name, checksum);
+
+        // Find a free location to write the entries
         let (mut entry_cluster, mut entry_sector, mut sector_offset) =
-            self.find_free_loc(parent_cluster, required_entries);
+            self.find_free_loc(parent_cluster, lfn_entries.len() + 1);
 
         if entry_cluster == 0 {
             return;
         }
 
-        println!(
-            "Free location: {:?}",
-            (entry_cluster, entry_sector, sector_offset)
-        );
-
-        let short_name = self.create_short_filename(name);
-
         // Load the sector into memory
         let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
         self.device.read(read_buffer, entry_sector as u64, 1);
 
-        // Handle sector overflow and cluster allocation
-        if sector_offset >= self.fs.bytes_per_sector as u32 {
-            println!("Sector overflow");
-            sector_offset %= self.fs.bytes_per_sector as u32;
-            entry_sector += 1;
+        // Write the LFN entries to the buffer
+        for lfn_entry in lfn_entries.iter() {
+            let entry_ptr = read_buffer.add(sector_offset as usize);
+            core::ptr::write_volatile(entry_ptr as *mut LongDirectoryEntry, *lfn_entry);
+            sector_offset += size_of::<LongDirectoryEntry>() as u32;
 
-            println!("Entry sector: {}", entry_sector);
+            if sector_offset >= self.fs.bytes_per_sector as u32 {
+                sector_offset %= self.fs.bytes_per_sector as u32;
+                entry_sector += 1;
 
-            if entry_sector >= self.fs.sectors_per_cluster as u32 {
-                let next_cluster = self.get_next_cluster(entry_cluster);
+                if entry_sector >= self.fs.sectors_per_cluster as u32 {
+                    entry_sector = 0;
+                    let next_cluster = self.get_next_cluster(entry_cluster);
 
-                if next_cluster >= CLUSTER_LAST {
-                    let new_cluster = self.alloc_cluster();
-                    self.set_next_cluster(entry_cluster, new_cluster);
-                    entry_cluster = new_cluster;
-                } else {
-                    entry_cluster = next_cluster;
+                    if next_cluster >= CLUSTER_LAST {
+                        let new_cluster = self.alloc_cluster();
+                        self.set_next_cluster(entry_cluster, new_cluster);
+                        entry_cluster = new_cluster;
+                    } else {
+                        entry_cluster = next_cluster;
+                    }
                 }
+
+                entry_sector = self.fs.first_data_sector
+                    + (entry_cluster - 2) * self.fs.sectors_per_cluster as u32
+                    + entry_sector;
+
+                // Load the next sector into the buffer
+                self.device.read(read_buffer, entry_sector as u64, 1);
             }
-
-            entry_sector = self.fs.first_data_sector
-                + (entry_cluster - 2) * self.fs.sectors_per_cluster as u32
-                + entry_sector;
-
-            // Load the next sector into the buffer
-            self.device.read(read_buffer, entry_sector as u64, 1);
         }
 
         // Write the short name entry into the buffer
         let entry_ptr = read_buffer.add(sector_offset as usize);
-        let entry = entry_ptr as *mut DirectoryEntry;
-        *entry = DirectoryEntry {
-            name: short_name,
-            attributes,
-            reserved: 0,
-            creation_time_tenths: 0,
-            creation_time: 0,
-            creation_date: 0,
-            access_date: 0,
-            high_cluster: (cluster >> 16) as u16,
-            modification_time: 0,
-            modification_date: 0,
-            low_cluster: (cluster & 0xFFFF) as u16,
-            size: 0,
-        };
+        core::ptr::write_volatile(
+            entry_ptr as *mut DirectoryEntry,
+            DirectoryEntry {
+                name: short_name,
+                attributes,
+                reserved: 0,
+                creation_time_tenths: 0,
+                creation_time: 0,
+                creation_date: 0,
+                access_date: 0,
+                high_cluster: (cluster >> 16) as u16,
+                modification_time: 0,
+                modification_date: 0,
+                low_cluster: (cluster & 0xFFFF) as u16,
+                size: 0,
+            },
+        );
 
         // Write the buffer back to disk
         self.device.write(read_buffer, entry_sector as u64, 1);
 
-        println!("Short entry written");
+        println!("Entry written successfully");
     }
 
     unsafe fn find_free_loc(&self, cluster: u32, needed: usize) -> (u32, u32, u32) {
@@ -493,50 +503,74 @@ impl FatDriver {
         short_name
     }
 
-    fn create_lfn_entries(&self, name: &str) -> Vec<LongDirectoryEntry> {
-        let mut entries = Vec::new();
-        let name_chars = name.chars().collect::<Vec<char>>();
-        let mut name_chars_idx = 0;
+    fn calculate_checksum(&self, short_name: &[u8]) -> u8 {
+        let mut checksum = 0u8;
+        for &byte in short_name {
+            checksum = ((checksum & 1) << 7).wrapping_add((checksum >> 1).wrapping_add(byte));
+        }
+        checksum
+    }
 
-        let mut entry = LongDirectoryEntry::default();
-        entry.order = 0x40;
+    fn create_lfn_entries(name: &str, checksum: u8) -> Vec<LongDirectoryEntry> {
+        let name_len = name.len();
+        let long_entries = (name_len / 13) + 1;
 
-        while name_chars_idx < name_chars.len() {
+        // Create a buffer for LongDirectoryEntry structures
+        let mut entries = Vec::with_capacity(long_entries);
+
+        let utf16_name: Vec<u16> = name.encode_utf16().collect();
+        let mut counter = 0;
+
+        for j in 0..long_entries {
+            let mut lfn_entry = LongDirectoryEntry {
+                order: (j + 1) as u8,
+                name1: [0; 5],
+                attributes: ENTRY_LONG,
+                reserved1: 0,
+                checksum,
+                name2: [0; 6],
+                reserved2: 0,
+                name3: [0; 2],
+            };
+
+            if j == (long_entries - 1) {
+                lfn_entry.order |= 0x40; // Mark as the last LFN entry
+            }
+
+            // Fill name1 (5 characters)
             for i in 0..5 {
-                entry.name1[i] = if name_chars_idx < name_chars.len() {
-                    name_chars[name_chars_idx] as u16
+                if counter >= utf16_name.len() {
+                    lfn_entry.name1[i] = 0;
                 } else {
-                    0xFFFF
-                };
-                name_chars_idx += 1;
+                    lfn_entry.name1[i] = utf16_name[counter];
+                    counter += 1;
+                }
             }
 
+            // Fill name2 (6 characters)
             for i in 0..6 {
-                entry.name2[i] = if name_chars_idx < name_chars.len() {
-                    name_chars[name_chars_idx] as u16
+                if counter >= utf16_name.len() {
+                    lfn_entry.name2[i] = 0;
                 } else {
-                    0xFFFF
-                };
-                name_chars_idx += 1;
+                    lfn_entry.name2[i] = utf16_name[counter];
+                    counter += 1;
+                }
             }
 
+            // Fill name3 (2 characters)
             for i in 0..2 {
-                entry.name3[i] = if name_chars_idx < name_chars.len() {
-                    name_chars[name_chars_idx] as u16
+                if counter >= utf16_name.len() {
+                    lfn_entry.name3[i] = 0;
                 } else {
-                    0xFFFF
-                };
-                name_chars_idx += 1;
+                    lfn_entry.name3[i] = utf16_name[counter];
+                    counter += 1;
+                }
             }
 
-            if name_chars_idx == name_chars.len() {
-                entry.order |= 0x40;
-            }
-
-            entries.push(entry);
-            entry.order += 1;
+            entries.push(lfn_entry);
         }
 
+        entries.reverse(); // Reverse the order to prepare for writing to disk
         entries
     }
 
