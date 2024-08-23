@@ -654,7 +654,6 @@ impl AhciController {
             start_sector,
             sector_count,
         );
-        println!("Start sector: {}", start_sector);
     }
 
     pub unsafe fn flush(&self, port_no: usize) {

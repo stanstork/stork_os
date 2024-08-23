@@ -8,3 +8,9 @@ pub struct VfsEntry {
     pub sector: u32,
     pub offset: u32,
 }
+
+impl VfsEntry {
+    pub fn get_cluster(&self) -> u32 {
+        self.entry.high_cluster as u32 | self.entry.low_cluster as u32
+    }
+}
