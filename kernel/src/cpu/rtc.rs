@@ -15,10 +15,11 @@ impl RtClock {
         let reg_b = self.read_rtc(0xB);
 
         if reg_b & 0x04 == 0 {
-            return value;
+            // BCD mode
+            return (value & 0xF) + ((value / 16) * 10);
         }
 
-        (value & 0xF) + ((value / 16) * 10)
+        value
     }
 
     pub fn read_minutes(&self) -> u8 {
@@ -27,10 +28,11 @@ impl RtClock {
         let reg_b = self.read_rtc(0xB);
 
         if reg_b & 0x04 == 0 {
-            return value;
+            // BCD mode
+            return (value & 0xF) + ((value / 16) * 10);
         }
 
-        (value & 0xF) + ((value / 16) * 10)
+        value
     }
 
     pub fn read_hours(&self) -> u8 {
@@ -38,19 +40,16 @@ impl RtClock {
         let value = self.read_rtc(4);
         let reg_b = self.read_rtc(0xB);
 
-        let is_pm = (value & 0x80) != 0;
-
-        if reg_b & 0x02 == 0 {
-            return value;
+        let mut hours = value;
+        if reg_b & 0x02 == 0 && (value & 0x80) != 0 {
+            // 12-hour mode and PM flag is set
+            hours = ((value & 0xF) + ((value / 16) * 10)) + 12; // Convert to 24-hour format
+        } else if reg_b & 0x04 == 0 {
+            // BCD mode
+            hours = (value & 0xF) + ((value / 16) * 10);
         }
 
-        let mut hours = (value & 0xF) + ((value / 16) * 10);
-
-        if is_pm {
-            hours += 12;
-        }
-
-        hours
+        hours & 0x7F // Ensure we strip the PM bit for 24-hour mode
     }
 
     pub fn read_weekday(&self) -> u8 {
@@ -59,10 +58,11 @@ impl RtClock {
         let reg_b = self.read_rtc(0xB);
 
         if reg_b & 0x04 == 0 {
-            return value;
+            // BCD mode
+            return (value & 0xF) + ((value / 16) * 10);
         }
 
-        (value & 0xF) + ((value / 16) * 10)
+        value
     }
 
     pub fn read_day_of_month(&self) -> u8 {
@@ -71,10 +71,11 @@ impl RtClock {
         let reg_b = self.read_rtc(0xB);
 
         if reg_b & 0x04 == 0 {
-            return value;
+            // BCD mode
+            return (value & 0xF) + ((value / 16) * 10);
         }
 
-        (value & 0xF) + ((value / 16) * 10)
+        value
     }
 
     pub fn read_month(&self) -> u8 {
@@ -83,10 +84,11 @@ impl RtClock {
         let reg_b = self.read_rtc(0xB);
 
         if reg_b & 0x04 == 0 {
-            return value;
+            // BCD mode
+            return (value & 0xF) + ((value / 16) * 10);
         }
 
-        (value & 0xF) + ((value / 16) * 10)
+        value
     }
 
     pub fn read_year(&self) -> u16 {
@@ -94,11 +96,23 @@ impl RtClock {
         let value = self.read_rtc(9);
         let reg_b = self.read_rtc(0xB);
 
-        if reg_b & 0x04 == 0 {
-            return value as u16;
+        let mut year = if reg_b & 0x04 == 0 {
+            // BCD mode
+            (value & 0xF) + ((value / 16) * 10)
+        } else {
+            value
+        } as u16;
+
+        // Adjust year to the correct century
+        if year < 80 {
+            // Assuming year is in the range 00-79, add 2000
+            year += 2000;
+        } else {
+            // Assuming year is in the range 80-99, add 1900
+            year += 1900;
         }
 
-        (value & 0xF) as u16 + (((value / 16) * 10) as u16)
+        year
     }
 
     pub fn read_time(&self) -> (u8, u8, u8) {
@@ -114,10 +128,8 @@ impl RtClock {
     }
 
     fn read_rtc(&self, reg: u8) -> u8 {
-        unsafe {
-            io::outb(0x70, reg);
-            io::inb(0x71)
-        }
+        io::outb(0x70, reg);
+        io::inb(0x71)
     }
 
     fn update_in_progress(&self) {

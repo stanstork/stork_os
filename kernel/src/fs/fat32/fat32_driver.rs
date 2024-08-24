@@ -1,11 +1,7 @@
 use super::{DirectoryEntry, Fat32BootSector};
 use crate::{
     cpu::rtc::RTC,
-    fs::{
-        entry,
-        fat32::LongDirectoryEntry,
-        node::{self, VfsEntry},
-    },
+    fs::{fat32::LongDirectoryEntry, node::VfsEntry},
     memory, print, println,
     storage::ahci_device::AhciDevice,
 };
@@ -98,18 +94,20 @@ impl FatDriver {
         }
 
         let mut current_cluster = self.fs.root_dir_cluster;
+        let mut last_node = None;
 
         for (i, part) in path_parts.iter().enumerate() {
             let node = self.search_in_dir(current_cluster, part, i == 0)?;
             let is_dir = node.entry.attributes & 0x10 != 0;
             if is_dir {
                 current_cluster = node.entry.high_cluster as u32 | node.entry.low_cluster as u32;
+                last_node = Some(node);
             } else {
                 return Some(node);
             }
         }
 
-        None
+        last_node
     }
 
     fn search_in_dir(&self, cluster: u32, name: &str, root: bool) -> Option<VfsEntry> {
@@ -341,12 +339,29 @@ impl FatDriver {
         let parent_cluster = if parent_path.is_empty() {
             self.fs.root_dir_cluster
         } else {
+            println!("Parent path: {}", parent_path);
             let parent_node = self.get_node(&parent_path).unwrap();
             parent_node.entry.high_cluster as u32 | parent_node.entry.low_cluster as u32
         };
 
         unsafe {
-            self.create_entry(parent_cluster, path_parts.last().unwrap(), 0, CLUSTER_FREE);
+            // Allocate a cluster for the new file (even if it's initially empty)
+            let new_file_cluster = self.alloc_cluster();
+            if new_file_cluster == 0 {
+                println!("Failed to allocate cluster for new file");
+                return;
+            }
+
+            // Create the file entry in the parent directory
+            self.create_entry(
+                parent_cluster,
+                path_parts.last().unwrap(),
+                0,
+                new_file_cluster,
+            );
+
+            // Initialize the allocated cluster for the new file to zero (optional but recommended)
+            self.clear_cluster(new_file_cluster);
         }
     }
 
@@ -367,12 +382,79 @@ impl FatDriver {
         };
 
         unsafe {
+            // Allocate a new cluster for the directory
+            let new_dir_cluster = self.alloc_cluster();
+            if new_dir_cluster == 0 {
+                println!("Failed to allocate cluster for new directory");
+                return;
+            }
+
+            // Create the directory entry in the parent directory
             self.create_entry(
                 parent_cluster,
                 path_parts.last().unwrap(),
                 ATTR_DIRECTORY,
-                CLUSTER_FREE,
+                new_dir_cluster,
             );
+
+            // Calculate the sector for the new directory
+            let sector = self.fs.first_data_sector
+                + (new_dir_cluster - 2) * self.fs.sectors_per_cluster as u32;
+
+            // Create the "." entry for the new directory
+            let mut dot_entry = DirectoryEntry {
+                name: [
+                    b'.', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
+                ],
+                attributes: ATTR_DIRECTORY,
+                reserved: 0,
+                creation_time_tenths: 0,
+                creation_time: 0,
+                creation_date: 0,
+                access_date: 0,
+                high_cluster: (new_dir_cluster >> 16) as u16,
+                modification_time: 0,
+                modification_date: 0,
+                low_cluster: (new_dir_cluster & 0xFFFF) as u16,
+                size: 0,
+            };
+
+            // Read the sector where the new directory is located
+            let read_buffer =
+                memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
+            self.device.read(read_buffer, sector as u64, 1);
+
+            // Write the "." entry at the beginning of the directory
+            core::ptr::write_volatile(read_buffer as *mut DirectoryEntry, dot_entry);
+
+            // Update the ".." entry to point to the parent directory
+            dot_entry.name[1] = b'.';
+            dot_entry.high_cluster = (parent_cluster >> 16) as u16;
+            dot_entry.low_cluster = (parent_cluster & 0xFFFF) as u16;
+
+            // Write the ".." entry just after the "." entry
+            core::ptr::write_volatile(
+                read_buffer.add(size_of::<DirectoryEntry>() as usize) as *mut DirectoryEntry,
+                dot_entry,
+            );
+
+            // Write the buffer back to the disk
+            self.device.write(read_buffer, sector as u64, 1);
+        }
+    }
+
+    fn clear_cluster(&self, cluster: u32) {
+        let sector = self.fs.first_data_sector + (cluster - 2) * self.fs.sectors_per_cluster as u32;
+        let buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
+
+        unsafe {
+            // Zero out the buffer
+            core::ptr::write_bytes(buffer, 0, self.fs.bytes_per_sector as usize);
+        }
+
+        // Write zeroed buffer to all sectors in the cluster
+        for i in 0..self.fs.sectors_per_cluster {
+            self.device.write(buffer, sector as u64 + i as u64, 1);
         }
     }
 
@@ -411,7 +493,7 @@ impl FatDriver {
                     memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
                 if bytes_to_write < self.fs.bytes_per_sector as usize {
-                    // Handle partial sector write
+                    // Partial write: read existing sector, modify, and write back
                     self.device.read(write_buffer, sector as u64 + s as u64, 1);
                     unsafe {
                         core::ptr::copy_nonoverlapping(
@@ -420,8 +502,13 @@ impl FatDriver {
                             bytes_to_write,
                         );
                     }
+
+                    // println!("Buffer content before partial write:");
+                    // Self::print_buffer(unsafe { buffer.add(written_bytes) }, bytes_to_write);
+
+                    self.device.write(write_buffer, sector as u64 + s as u64, 1);
                 } else {
-                    // Handle full sector write
+                    // Full sector write
                     unsafe {
                         core::ptr::copy_nonoverlapping(
                             buffer.add(written_bytes),
@@ -429,9 +516,13 @@ impl FatDriver {
                             self.fs.bytes_per_sector as usize,
                         );
                     }
+
+                    // println!("Buffer content before full write:");
+                    // Self::print_buffer(unsafe { buffer.add(written_bytes) }, bytes_to_write);
+
+                    self.device.write(write_buffer, sector as u64 + s as u64, 1);
                 }
 
-                self.device.write(write_buffer, sector as u64 + s as u64, 1);
                 written_bytes += bytes_to_write;
 
                 if written_bytes >= size {
@@ -439,6 +530,7 @@ impl FatDriver {
                 }
             }
 
+            // Allocate new cluster if needed and update FAT
             if written_bytes < size {
                 let next_cluster = self.get_next_cluster(cluster);
                 if next_cluster == 0x0FFFFFFF {
@@ -449,21 +541,35 @@ impl FatDriver {
                         return;
                     }
 
-                    // Link the new cluster in the FAT
                     unsafe { self.set_next_cluster(cluster, new_cluster) };
                     cluster = new_cluster;
                 } else {
                     cluster = next_cluster;
                 }
-                last_cluster = cluster; // Track the last cluster used
+                last_cluster = cluster;
             }
         }
 
         // Mark the end of the cluster chain in the FAT
         unsafe { self.set_next_cluster(last_cluster, 0x0FFFFFFF) };
 
+        // Update the file size and modification time
+        unsafe { Self::update_file_metadata(&mut node.entry) };
+
         // Update the directory entry with the new file size and modification time
         self.update_entry(&node, size);
+    }
+
+    fn print_buffer(buffer: *const u8, size: usize) {
+        for i in 0..size {
+            unsafe {
+                print!("{:02x} ", *buffer.add(i));
+            }
+            if i % 16 == 15 {
+                println!();
+            }
+        }
+        println!();
     }
 
     fn update_entry(&self, node: &VfsEntry, size: usize) {
@@ -481,12 +587,10 @@ impl FatDriver {
         let entry_ptr = unsafe { read_buffer.add(offset as usize) };
 
         // Dump the buffer starting from the entry position
-        unsafe {
-            Self::dump_buffer(
-                entry_ptr as *const u8, // Start dumping from the entry
-                self.fs.bytes_per_sector as usize - offset as usize, // Dump from the entry to the end of the sector
-            );
-        }
+        // Self::dump_buffer(
+        //     entry_ptr as *const u8, // Start dumping from the entry
+        //     self.fs.bytes_per_sector as usize - offset as usize, // Dump from the entry to the end of the sector
+        // );
 
         let entry = entry_ptr as *mut DirectoryEntry;
 
@@ -515,6 +619,11 @@ impl FatDriver {
     unsafe fn update_file_metadata(node: &mut DirectoryEntry) {
         let (hour, minute, second) = RTC.lock().read_time();
         let (day, month, year) = RTC.lock().read_date();
+
+        println!(
+            "Updating file metadata: {}-{}-{} {}:{}:{}",
+            year, month, day, hour, minute, second
+        );
 
         node.modification_date = Self::convert_to_fat_date(year as u16, month as u16, day as u16);
         node.modification_time = Self::convert_to_fat_time(hour as u16, minute as u16);
@@ -554,9 +663,9 @@ impl FatDriver {
         name: &str,
         attributes: u8,
         cluster: u32,
-    ) -> Option<*const DirectoryEntry> {
+    ) -> u32 {
         if name.is_empty() {
-            return None;
+            return 0;
         }
 
         // Generate the short filename
@@ -575,7 +684,7 @@ impl FatDriver {
             self.find_free_loc(parent_cluster, lfn_entries.len() + 1);
 
         if entry_cluster == 0 {
-            return None;
+            return 0;
         }
 
         // Load the sector into memory
@@ -641,7 +750,27 @@ impl FatDriver {
         self.device.write(read_buffer, entry_sector as u64, 1);
 
         println!("Entry written successfully");
-        Some(entry_ptr as *const DirectoryEntry)
+        entry_cluster
+    }
+
+    pub fn delete_file(&self, path: &str) {
+        let node = self.get_node(path).unwrap();
+        unsafe { self.delete_entry(&node) };
+    }
+
+    unsafe fn delete_entry(&self, node: &VfsEntry) {
+        let sector = node.sector;
+        let offset = node.offset;
+
+        let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
+        self.device.read(read_buffer, sector as u64, 1);
+
+        let entry_ptr = read_buffer.add(offset as usize);
+        let entry = entry_ptr as *mut DirectoryEntry;
+
+        (*entry).name[0] = ENTRY_DELETED;
+
+        self.device.write(read_buffer, sector as u64, 1);
     }
 
     unsafe fn find_free_loc(&self, cluster: u32, needed: usize) -> (u32, u32, u32) {
@@ -804,18 +933,12 @@ impl FatDriver {
         let fat_sector = self.fs.first_fat_sector + (cluster * 4) / self.fs.bytes_per_sector as u32;
         let fat_offset = (cluster * 4) % self.fs.bytes_per_sector as u32;
 
-        let mut buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
+        let buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
         self.device.read(buffer, fat_sector as u64, 1);
 
-        buffer = buffer.add(fat_offset as usize);
-        *buffer = next_cluster as u8;
+        let entry_ptr = buffer.add(fat_offset as usize) as *mut u32;
+        *entry_ptr = (*entry_ptr & 0xF0000000) | (next_cluster & 0x0FFFFFFF);
 
         self.device.write(buffer, fat_sector as u64, 1);
     }
-}
-
-pub struct DiskLocation {
-    pub cluster: u32,
-    pub sector: u32,
-    pub offset: u32,
 }

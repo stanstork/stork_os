@@ -96,52 +96,22 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             String::from("FAT32"),
         );
 
-        let buffer = memory::allocate_dma_buffer(512) as *mut u8;
         let fat_driver = vfs.get_driver("/").unwrap();
-        fat_driver.read_file("test.txt", buffer);
-        let size = fat_driver.size("test.txt");
 
-        print_buffer_text(buffer, size.unwrap());
-
-        println!();
-
-        let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
-        println!("Root directory entries:");
-        for entry in entries {
-            println!("Name: {}", entry.name);
-        }
-
-        fat_driver.create_file("very_long_name_test2.txt");
         fat_driver.create_dir("test_dir");
+        fat_driver.create_file("test_dir/test_file.txt");
 
-        let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
-        println!("Root directory entries:");
-        for entry in entries {
-            println!("Name: {}", entry.name);
-        }
-
-        let content = [
-            b'T', b'h', b'i', b's', b' ', b'i', b's', b' ', b'a', b' ', b't', b'e', b' ', b's',
-            b' ', b't', b' ', b'c', b' ', b'o', b' ', b'n', b' ', b't', b' ', b'e', b' ', b'n',
-            b' ', b't', b' ', b'.', b' ', b't', b' ', b'x', b' ', b't', b' ',
-        ];
+        let content = "Hello, World!";
         fat_driver.write_file(
-            "very_long_name_test2.txt",
+            "test_dir/test_file.txt",
             content.as_ptr() as *mut u8,
             content.len(),
         );
 
-        let buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        fat_driver.read_file("very_long_name_test2.txt", buffer);
-        print_buffer_text(buffer, content.len());
-
         let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
-        println!("Root directory entries:");
         for entry in entries {
-            println!("Name: {}", entry.name);
-
             let size = entry.entry.size;
-            println!("Size: {}", size);
+            println!("Name: {}, size: {}", entry.name, size);
         }
     }
 
