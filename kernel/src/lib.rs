@@ -7,20 +7,19 @@
 #![feature(str_from_raw_parts)] // enable str::from_raw_parts
 
 use acpi::rsdp;
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::string::String;
 use apic::APIC;
-use core::{arch::asm, mem::size_of, panic::PanicInfo};
+use core::{arch::asm, panic::PanicInfo};
 use drivers::screen::display::{self, DISPLAY};
-use fs::fat32::{fat32_driver::CLUSTER_LAST, DirectoryEntry};
 use interrupts::{
     isr::{self, KEYBOARD_IRQ},
     no_interrupts,
 };
 use memory::global_allocator::GlobalAllocator;
-use storage::ahci::{self, AHCI_DEVICES};
+use storage::{
+    ahci::{self},
+    STORAGE_MANAGER,
+};
 use structures::BootInfo;
 use tasks::{
     process::Process,
@@ -88,8 +87,8 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         pci::PCI::scan();
         ahci::init();
 
-        let ahci_device = &AHCI_DEVICES.lock()[0];
         let mut vfs = fs::VirtualFileSystem::new();
+        let ahci_device = STORAGE_MANAGER.get_ahci_device("AHCI0").unwrap();
         vfs.mount(
             ahci_device.clone(),
             String::from("/"),
@@ -112,6 +111,18 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         for entry in entries {
             let size = entry.entry.size;
             println!("Name: {}, size: {}", entry.name, size);
+        }
+
+        let mut fs2 = fs::fs2::FileSystem::new();
+        fs2.mount("AHCI0", "/", "FAT32");
+
+        println!("Listing directory /");
+
+        let list_directory = fs2.list_directory("/");
+        if let Some(entries) = list_directory {
+            for entry in entries {
+                println!("Name: {}", entry.name);
+            }
         }
     }
 

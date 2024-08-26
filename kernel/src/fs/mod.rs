@@ -1,16 +1,15 @@
-use core::pin;
-
 use crate::storage::ahci_device::AhciDevice;
 use alloc::{
     collections::btree_map::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
-use fat32::fat32_driver::FatDriver;
+use fat::fat_driver::FatDriver;
 
 pub(crate) mod entry;
-pub(crate) mod fat32;
-pub(crate) mod node;
+pub(crate) mod fat;
+pub(crate) mod fs2;
+pub(crate) mod vfs_directory_entry;
 pub(crate) mod vsf_manager;
 
 pub struct MountInfo {
@@ -33,7 +32,7 @@ impl VirtualFileSystem {
     }
 
     pub fn mount(&mut self, device: AhciDevice, path: String, driver_name: String) {
-        let driver = FatDriver::mount(device, 0, 0);
+        let driver = FatDriver::mount(device);
         self.mount_points.insert(path.clone(), driver);
         self.mount_info.insert(
             path.clone(),
@@ -64,11 +63,11 @@ impl VirtualFileSystem {
         todo!("Implement exists");
     }
 
-    pub fn create(&self, path: &str) -> Option<crate::fs::node::VfsEntry> {
+    pub fn create(&self, path: &str) -> Option<crate::fs::vfs_directory_entry::VfsDirectoryEntry> {
         todo!("Implement create");
     }
 
-    pub fn mkdir(&self, path: &str) -> Option<crate::fs::node::VfsEntry> {
+    pub fn mkdir(&self, path: &str) -> Option<crate::fs::vfs_directory_entry::VfsDirectoryEntry> {
         todo!("Implement mkdir");
     }
 
@@ -80,7 +79,7 @@ impl VirtualFileSystem {
         todo!("Implement rmdir");
     }
 
-    pub fn ls(&self, path: &str) -> Option<Vec<crate::fs::node::VfsEntry>> {
+    pub fn ls(&self, path: &str) -> Option<Vec<crate::fs::vfs_directory_entry::VfsDirectoryEntry>> {
         todo!("Implement ls");
     }
 

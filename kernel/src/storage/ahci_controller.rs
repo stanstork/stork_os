@@ -6,6 +6,7 @@ use crate::{
     storage::{
         ahci,
         ahci_device::{AhciDevice, SATAIdent},
+        STORAGE_MANAGER,
     },
     sync::mutex::SpinMutex,
 };
@@ -325,7 +326,7 @@ impl AhciController {
                 println!("Size: {} Mb", size);
 
                 let ahci_device = AhciDevice::new(i as usize, DeviceSignature::ATA, identity);
-                ahci::AHCI_DEVICES.lock().push(ahci_device);
+                STORAGE_MANAGER.register_ahci_device(ahci_device, alloc::format!("AHCI{}", i));
             } else {
                 println!(
                     "AHCI Port {} is an unknown or unsupported device type: {:?}",

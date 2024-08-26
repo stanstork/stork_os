@@ -1,34 +1,33 @@
-use super::{DirectoryEntry, Fat32BootSector};
 use crate::{
     cpu::rtc::RTC,
-    fs::{fat32::LongDirectoryEntry, node::VfsEntry},
+    fs::{
+        fat::{directory_entry::DirectoryEntry, long_directory_entry::LongDirectoryEntry},
+        vfs_directory_entry::VfsDirectoryEntry,
+    },
     memory, print, println,
     storage::ahci_device::AhciDevice,
 };
 use alloc::{string::String, vec::Vec};
 use core::{intrinsics::size_of, slice::from_raw_parts};
 
-pub struct FatFileSystem {
-    pub device: AhciDevice,
+use super::boot_sector::Fat32BootSector;
+
+pub struct FileSystemInfo {
     pub start_sector: u64,
     pub sectors_count: u64,
-
     pub bytes_per_sector: u16,
     pub root_sectors: u32,
     pub sectors_per_cluster: u8,
     pub cluster_size: u32,
-
     pub first_data_sector: u32,
     pub first_fat_sector: u32,
     pub root_dir_cluster: u32,
     pub total_clusters: u32,
-
     pub root_dir_entries: u16,
 }
 
 pub struct FatDriver {
-    pub(crate) volume_id: u32,
-    pub(crate) fs: FatFileSystem,
+    pub(crate) fs: FileSystemInfo,
     pub(crate) device: AhciDevice,
 }
 
@@ -45,44 +44,157 @@ pub const ENTRY_LONG: u8 = 0x0F;
 pub const ATTR_DIRECTORY: u8 = 0x10;
 
 impl FatDriver {
-    pub fn mount(device: AhciDevice, start_sector: u64, sectors_count: u64) -> Self {
-        let read_buffer = crate::memory::allocate_dma_buffer(512) as *mut u8;
+    pub fn mount(device: AhciDevice) -> Self {
+        let boot_sector = Self::read_boot_sector(&device);
 
-        device.read(read_buffer, start_sector, 1);
-
-        let boot_sector = read_buffer as *const Fat32BootSector;
-        let boot_sector = unsafe { *boot_sector };
-
-        let root_sectors = ((boot_sector.root_dir_entries as u32 * 32)
-            + (boot_sector.bytes_per_sector as u32 - 1))
-            / boot_sector.bytes_per_sector as u32;
-        let first_data_sector = boot_sector.reserved_sectors as u32
+        // Compute values based on the boot sector
+        let bytes_per_sector = boot_sector.bytes_per_sector as u32;
+        let root_sectors = ((boot_sector.root_dir_entries as u32 * 32) + (bytes_per_sector - 1))
+            / bytes_per_sector;
+        let first_fat_sector = boot_sector.reserved_sectors as u32;
+        let first_data_sector = first_fat_sector
             + (boot_sector.fat_count as u32 * boot_sector.sectors_per_fat_large as u32);
-        let total_clusters = (boot_sector.total_sectors_large - first_data_sector as u32)
+        let cluster_size = bytes_per_sector * boot_sector.sectors_per_cluster as u32;
+        let total_clusters = (boot_sector.total_sectors_large - first_data_sector)
             / boot_sector.sectors_per_cluster as u32;
 
+        // Initialize FileSystemInfo with computed values
+        let fs_info = FileSystemInfo {
+            start_sector: 0,
+            sectors_count: boot_sector.total_sectors_large as u64,
+            bytes_per_sector: boot_sector.bytes_per_sector,
+            root_sectors,
+            sectors_per_cluster: boot_sector.sectors_per_cluster,
+            cluster_size,
+            first_data_sector,
+            first_fat_sector,
+            root_dir_cluster: boot_sector.root_dir_start,
+            total_clusters,
+            root_dir_entries: boot_sector.root_dir_entries,
+        };
+
         FatDriver {
-            volume_id: boot_sector.serial_number,
-            fs: FatFileSystem {
-                device,
-                start_sector,
-                sectors_count,
-                bytes_per_sector: boot_sector.bytes_per_sector,
-                root_sectors,
-                sectors_per_cluster: boot_sector.sectors_per_cluster,
-                cluster_size: boot_sector.bytes_per_sector as u32
-                    * boot_sector.sectors_per_cluster as u32,
-                first_data_sector,
-                first_fat_sector: boot_sector.reserved_sectors as u32,
-                root_dir_cluster: boot_sector.root_dir_start,
-                total_clusters,
-                root_dir_entries: boot_sector.root_dir_entries,
-            },
+            fs: fs_info,
             device,
         }
     }
 
-    pub fn get_node(&self, path: &str) -> Option<VfsEntry> {
+    pub unsafe fn get_dir_entries(&self, cluster: u32) -> Vec<VfsDirectoryEntry> {
+        let mut entries = Vec::new();
+        let mut current_cluster = cluster;
+
+        while self.is_valid_cluster(current_cluster) {
+            let sector = self.get_sector(current_cluster);
+            let cluster_entries = self.read_cluster_entries(sector);
+
+            entries.extend(cluster_entries);
+
+            current_cluster = self.get_next_cluster(current_cluster);
+        }
+
+        entries
+    }
+
+    pub fn get_dir_entry(&self, path: &str) -> Option<VfsDirectoryEntry> {
+        let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+        // If the path is "/", search the root directory
+        if path_parts.is_empty() {
+            return self.search_in_dir(self.fs.root_dir_cluster, "/");
+        }
+
+        let mut current_cluster = self.fs.root_dir_cluster;
+        let mut last_entry = None;
+
+        for (_i, part) in path_parts.iter().enumerate() {
+            let entry = self.search_in_dir(current_cluster, part)?;
+            if entry.is_dir() {
+                current_cluster = entry.get_cluster();
+                last_entry = Some(entry);
+            } else {
+                return Some(entry);
+            }
+        }
+
+        last_entry
+    }
+
+    fn read_boot_sector(device: &AhciDevice) -> Fat32BootSector {
+        let read_buffer = crate::memory::allocate_dma_buffer(512) as *mut u8;
+        device.read(read_buffer, 0, 1);
+        unsafe { *(read_buffer as *const Fat32BootSector) }
+    }
+
+    fn is_valid_cluster(&self, cluster: u32) -> bool {
+        (cluster != CLUSTER_FREE) && (cluster < CLUSTER_LAST)
+    }
+
+    fn get_sector(&self, cluster: u32) -> u32 {
+        self.fs.first_data_sector + (cluster - 2) * self.fs.sectors_per_cluster as u32
+    }
+
+    fn read_cluster_entries(&self, sector: u32) -> Vec<VfsDirectoryEntry> {
+        let mut entries = Vec::new();
+
+        for i in 0..self.fs.sectors_per_cluster {
+            let read_buffer = self.read_sector(sector, i as u32);
+            let sector_entries = self.read_sector_entries(sector, read_buffer);
+
+            if sector_entries.is_empty() {
+                return entries;
+            }
+
+            entries.extend(sector_entries);
+        }
+
+        entries
+    }
+
+    fn read_sector(&self, sector: u32, offset: u32) -> *mut u8 {
+        let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
+        self.device
+            .read(read_buffer, sector as u64 + offset as u64, 1);
+        read_buffer
+    }
+
+    fn read_sector_entries(&self, sector: u32, buffer: *const u8) -> Vec<VfsDirectoryEntry> {
+        let mut entries = Vec::new();
+        let mut lfn_entries = Vec::new();
+
+        for i in 0..(self.fs.bytes_per_sector / size_of::<DirectoryEntry>() as u16) {
+            let entry_ptr = unsafe { buffer.add(i as usize * size_of::<DirectoryEntry>()) };
+            let entry = unsafe { *(entry_ptr as *const DirectoryEntry) };
+
+            if entry.name[0] == ENTRY_END {
+                return entries;
+            }
+
+            if entry.name[0] == ENTRY_FREE || entry.name[0] == ENTRY_DELETED {
+                continue;
+            }
+
+            if entry.attributes == ENTRY_LONG {
+                lfn_entries.push(unsafe { *(entry_ptr as *const LongDirectoryEntry) });
+                continue;
+            };
+
+            let offset = i as u32 * size_of::<DirectoryEntry>() as u32;
+            let node = VfsDirectoryEntry::from_entry(entry, &mut lfn_entries, sector, offset);
+
+            entries.push(node);
+        }
+
+        entries
+    }
+
+    fn search_in_dir(&self, cluster: u32, name: &str) -> Option<VfsDirectoryEntry> {
+        let entries = unsafe { self.get_dir_entries(cluster) };
+        entries
+            .into_iter()
+            .find(|entry| entry.name.eq_ignore_ascii_case(name))
+    }
+
+    pub fn get_node(&self, path: &str) -> Option<VfsDirectoryEntry> {
         let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         println!("Path: {:?}", path_parts);
@@ -90,14 +202,14 @@ impl FatDriver {
         // If the path is "/", return the root directory node
         if path_parts.is_empty() {
             println!("Returning root directory");
-            return self.search_in_dir(self.fs.root_dir_cluster, "/", true);
+            return self.search_in_dir(self.fs.root_dir_cluster, "/");
         }
 
         let mut current_cluster = self.fs.root_dir_cluster;
         let mut last_node = None;
 
         for (i, part) in path_parts.iter().enumerate() {
-            let node = self.search_in_dir(current_cluster, part, i == 0)?;
+            let node = self.search_in_dir(current_cluster, part)?;
             let is_dir = node.entry.attributes & 0x10 != 0;
             if is_dir {
                 current_cluster = node.entry.high_cluster as u32 | node.entry.low_cluster as u32;
@@ -108,86 +220,6 @@ impl FatDriver {
         }
 
         last_node
-    }
-
-    fn search_in_dir(&self, cluster: u32, name: &str, root: bool) -> Option<VfsEntry> {
-        println!("Cluster: {}, Name: {}", cluster, name);
-        let entries = unsafe { self.get_dir_entries(cluster) };
-
-        for node in entries {
-            let entry_name = node.name.clone();
-            if entry_name.eq_ignore_ascii_case(name) {
-                return Some(VfsEntry {
-                    entry: node.entry,
-                    name: node.name,
-                    sector: node.sector,
-                    offset: node.offset,
-                });
-            }
-        }
-
-        None
-    }
-
-    pub unsafe fn get_dir_entries(&self, cluster: u32) -> Vec<VfsEntry> {
-        let mut entries = Vec::new();
-        let mut long_filename_entries = Vec::new();
-        let mut cluster = cluster;
-
-        while (cluster != CLUSTER_FREE) && (cluster < CLUSTER_LAST) {
-            let sector =
-                self.fs.first_data_sector + (cluster - 2) * self.fs.sectors_per_cluster as u32;
-
-            println!("Cluster: {}, Sector: {}", cluster, sector);
-            println!("Sectors per cluster: {}", self.fs.sectors_per_cluster);
-
-            for i in 0..self.fs.sectors_per_cluster {
-                let read_buffer =
-                    memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
-                self.device.read(read_buffer, sector as u64 + i as u64, 1);
-
-                // Debugging: Dump the buffer to the console
-                // Self::dump_buffer(read_buffer, self.fs.bytes_per_sector as usize);
-
-                for j in 0..(self.fs.bytes_per_sector / size_of::<DirectoryEntry>() as u16) {
-                    let entry_ptr = read_buffer.add(j as usize * size_of::<DirectoryEntry>());
-                    let entry = *(entry_ptr as *const DirectoryEntry);
-
-                    if entry.name[0] == ENTRY_END {
-                        return entries;
-                    }
-
-                    if entry.name[0] == ENTRY_FREE || entry.name[0] == ENTRY_DELETED {
-                        continue;
-                    }
-
-                    if entry.attributes == ENTRY_LONG {
-                        long_filename_entries.push(*(entry_ptr as *const LongDirectoryEntry));
-                        continue;
-                    };
-
-                    let name = if long_filename_entries.is_empty() {
-                        self.parse_short_filename(entry.name.as_ptr())
-                    } else {
-                        let long_name = self.parse_long_filename(&long_filename_entries);
-                        long_filename_entries.clear();
-                        long_name
-                    };
-
-                    let node = VfsEntry {
-                        entry,
-                        name,
-                        sector: sector + i as u32,
-                        offset: j as u32 * size_of::<DirectoryEntry>() as u32,
-                    };
-                    entries.push(node);
-                }
-            }
-
-            cluster = self.get_next_cluster(cluster);
-        }
-
-        entries
     }
 
     fn parse_short_filename(&self, filename_ptr: *const u8) -> String {
@@ -572,7 +604,7 @@ impl FatDriver {
         println!();
     }
 
-    fn update_entry(&self, node: &VfsEntry, size: usize) {
+    fn update_entry(&self, node: &VfsDirectoryEntry, size: usize) {
         let sector = node.sector;
         let offset = node.offset;
 
@@ -629,7 +661,7 @@ impl FatDriver {
         node.modification_time = Self::convert_to_fat_time(hour as u16, minute as u16);
     }
 
-    fn update_node(&self, node: &VfsEntry) {
+    fn update_node(&self, node: &VfsDirectoryEntry) {
         let sector = node.sector;
         let offset = node.offset;
 
@@ -758,7 +790,7 @@ impl FatDriver {
         unsafe { self.delete_entry(&node) };
     }
 
-    unsafe fn delete_entry(&self, node: &VfsEntry) {
+    unsafe fn delete_entry(&self, node: &VfsDirectoryEntry) {
         let sector = node.sector;
         let offset = node.offset;
 
