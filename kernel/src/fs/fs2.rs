@@ -6,6 +6,12 @@ use alloc::{
     vec::Vec,
 };
 
+// Enum to specify the type of entry to create
+enum EntryType {
+    Directory,
+    File,
+}
+
 pub(crate) struct MountInfo {
     pub device: String,
     pub target: String,
@@ -74,30 +80,173 @@ impl FileSystem {
     }
 
     pub fn list_directory(&self, path: &str) -> Option<Vec<VfsDirectoryEntry>> {
-        // Find the driver associated with the given path
+        // Get driver and resolve the target cluster
+        let (driver, current_cluster) = self.resolve_target_cluster(path)?;
+        unsafe { Some(driver.get_dir_entries(current_cluster)) }
+    }
+
+    pub fn create_directory(&self, path: &str) {
+        self.create_entry(path, EntryType::Directory);
+    }
+
+    pub fn create_file(&self, path: &str) {
+        self.create_entry(path, EntryType::File);
+    }
+
+    pub fn read_file(&self, path: &str, buffer: *mut u8) {
+        if let Some((driver, entry)) = self.get_entry_for_path(path) {
+            let cluster = entry.get_cluster();
+            driver.read_file(cluster, buffer);
+        } else {
+            println!("File not found: {}", path);
+        }
+    }
+
+    pub fn write_file(&self, path: &str, data: *mut u8, size: usize) {
+        if let Some((driver, mut entry)) = self.get_entry_for_path(path) {
+            if entry.is_dir() {
+                println!("Error: {} is a directory", path);
+            } else {
+                driver.write_file(&mut entry, data, size);
+            }
+        } else {
+            println!("File not found: {}", path);
+        }
+    }
+
+    pub fn delete_file(&self, path: &str) {
+        self.delete_entry(path, EntryType::File);
+    }
+
+    pub fn delete_directory(&self, path: &str) {
+        self.delete_entry(path, EntryType::Directory);
+    }
+
+    pub fn exists(&self, path: &str) -> bool {
+        self.get_entry_for_path(path).is_some()
+    }
+
+    fn create_entry(&self, path: &str, entry_type: EntryType) {
+        if self.exists(path) {
+            println!(
+                "{} already exists: {}",
+                match entry_type {
+                    EntryType::Directory => "Directory",
+                    EntryType::File => "File",
+                },
+                path
+            );
+            return;
+        }
+
+        // Get driver and path components
+        let (driver, path_components) = match self.get_driver(path) {
+            Some(driver_info) => driver_info,
+            None => {
+                println!("Error retrieving driver for path: {}", path);
+                return;
+            }
+        };
+
+        let entry_name = match path_components.last() {
+            Some(name) => name,
+            None => {
+                println!("Error: Invalid path, no name found.");
+                return;
+            }
+        };
+
+        let parent_cluster = match self.resolve_parent_cluster(driver, &path_components) {
+            Some(cluster) => cluster,
+            None => {
+                println!("Error: Parent directory not found for path: {}", path);
+                return;
+            }
+        };
+
+        // Call the appropriate driver method based on entry type
+        match entry_type {
+            EntryType::Directory => driver.create_dir(parent_cluster, entry_name),
+            EntryType::File => driver.create_file(parent_cluster, entry_name),
+        }
+    }
+
+    fn delete_entry(&self, path: &str, entry_type: EntryType) {
+        if let Some((driver, entry)) = self.get_entry_for_path(path) {
+            match entry_type {
+                EntryType::File => {
+                    if entry.is_dir() {
+                        println!("Error: {} is a directory, not a file", path);
+                    } else {
+                        driver.delete_entry(&entry);
+                    }
+                }
+                EntryType::Directory => {
+                    if entry.is_dir() {
+                        driver.delete_entry(&entry);
+                    } else {
+                        println!("Error: {} is not a directory", path);
+                    }
+                }
+            }
+        } else {
+            println!(
+                "{} not found: {}",
+                match entry_type {
+                    EntryType::File => "File",
+                    EntryType::Directory => "Directory",
+                },
+                path
+            );
+        }
+    }
+
+    fn resolve_target_cluster<'a>(&'a self, path: &'a str) -> Option<(&'a FatDriver, u32)> {
         let (driver, path_components) = self.get_driver(path)?;
 
         let mut current_cluster = driver.fs.root_dir_cluster;
 
-        if Self::is_root_path(&path_components) {
-            // Directly list the entries in the root directory cluster
-            return unsafe { Some(driver.get_dir_entries(current_cluster)) };
-        }
+        if !Self::is_root_path(&path_components) {
+            for component in path_components {
+                let entry = driver.get_dir_entry(component)?;
 
-        // Navigate through each component of the path
-        for component in path_components {
-            let entry = driver.get_dir_entry(component)?;
+                if !entry.is_dir() {
+                    println!("Path component '{}' is not a directory", component);
+                    return None;
+                }
 
-            if !entry.is_dir() {
-                println!("Path component '{}' is not a directory", component);
-                return None;
+                current_cluster = entry.get_cluster();
             }
-
-            current_cluster = entry.get_cluster();
         }
 
-        // Get the directory entries for the target cluster
-        unsafe { Some(driver.get_dir_entries(current_cluster)) }
+        Some((driver, current_cluster))
+    }
+
+    fn resolve_parent_cluster(&self, driver: &FatDriver, path_components: &[&str]) -> Option<u32> {
+        let parent_path = path_components
+            .iter()
+            .take(path_components.len().saturating_sub(1))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if parent_path.is_empty() || Self::is_root_path(&path_components) {
+            Some(driver.fs.root_dir_cluster)
+        } else {
+            driver
+                .get_dir_entry(&parent_path)
+                .map(|entry| entry.get_cluster())
+        }
+    }
+
+    fn get_entry_for_path<'a>(
+        &'a self,
+        path: &'a str,
+    ) -> Option<(&'a FatDriver, VfsDirectoryEntry)> {
+        let (driver, _) = self.get_driver(path)?;
+        let entry = driver.get_dir_entry(path)?;
+
+        Some((driver, entry))
     }
 
     fn is_root_path(path_components: &[&str]) -> bool {
