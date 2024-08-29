@@ -1,10 +1,7 @@
-use super::{ahci::AHCI_CONTROLLER, ahci_controller::DeviceSignature};
-use crate::memory;
-
 // https://forum.osdev.org/viewtopic.php?f=1&t=30118
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-pub struct SATAIdent {
+pub struct SataIdentity {
     config: u16,                    // Lots of obsolete bit flags
     cyls: u16,                      // Obsolete
     reserved2: u16,                 // Special (word 2)
@@ -109,47 +106,4 @@ pub struct SATAIdent {
     max_dwnload_blocks: u16, // Maximum number of 512-byte data blocks per download microcode command
     words236_254: [u16; 19], // Reserved words 236-254
     integrity: u16,          // Integrity word
-}
-
-#[derive(Clone, Copy)]
-pub struct AhciDevice {
-    pub port_no: usize,
-    pub signature: DeviceSignature,
-    pub sata_ident: SATAIdent,
-}
-
-impl AhciDevice {
-    pub fn new(port_no: usize, signature: DeviceSignature, sata_ident: SATAIdent) -> Self {
-        AhciDevice {
-            port_no,
-            signature,
-            sata_ident,
-        }
-    }
-
-    pub fn read(&self, buffer: *mut u8, start_sector: u64, sectors_count: u64) {
-        unsafe {
-            AHCI_CONTROLLER.lock().as_mut().unwrap().read(
-                self.port_no,
-                &self.sata_ident,
-                buffer,
-                start_sector,
-                sectors_count,
-            )
-        };
-    }
-
-    pub fn write(&self, buffer: *mut u8, start_sector: u64, sectors_count: u64) {
-        unsafe {
-            AHCI_CONTROLLER.lock().as_mut().unwrap().write(
-                self.port_no,
-                buffer,
-                start_sector,
-                sectors_count,
-            )
-        };
-
-        let check_buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        self.read(check_buffer, start_sector, sectors_count);
-    }
 }

@@ -1,28 +1,35 @@
-use ahci_device::AhciDevice;
-use alloc::{collections::btree_map::BTreeMap, string::String};
+use crate::sync::mutex::SpinMutex;
+use ahci::{ahci_device::AhciDevice, init_ahci_controller};
+use alloc::string::String;
+use storage_manager::StorageManager;
 
-pub(crate) mod ahci;
-pub mod ahci_controller;
-pub mod ahci_device;
+pub mod ahci;
+pub mod storage_manager;
 
-pub struct StorageManager {
-    pub(crate) ahci_devices: BTreeMap<String, AhciDevice>,
+pub static mut STORAGE_MANAGER: SpinMutex<Option<StorageManager>> = SpinMutex::new(None);
+
+pub fn init_storage_manager() {
+    let storage_manager = StorageManager::new();
+    unsafe { STORAGE_MANAGER = SpinMutex::new(Some(storage_manager)) };
 }
 
-impl StorageManager {
-    pub const fn new() -> Self {
-        StorageManager {
-            ahci_devices: BTreeMap::new(),
-        }
-    }
-
-    pub fn register_ahci_device(&mut self, device: AhciDevice, name: String) {
-        self.ahci_devices.insert(name, device);
-    }
-
-    pub fn get_ahci_device(&self, name: &str) -> Option<&AhciDevice> {
-        self.ahci_devices.get(name)
+pub fn register_ahci_device(device: AhciDevice, name: String) {
+    let mut storage_manager = unsafe { STORAGE_MANAGER.lock() };
+    if let Some(ref mut storage_manager) = *storage_manager {
+        storage_manager.register_ahci_device(device, name);
     }
 }
 
-pub static mut STORAGE_MANAGER: StorageManager = StorageManager::new();
+pub fn get_ahci_device(name: &str) -> Option<AhciDevice> {
+    let storage_manager = unsafe { STORAGE_MANAGER.lock() };
+    if let Some(ref storage_manager) = *storage_manager {
+        storage_manager.get_ahci_device(name).cloned()
+    } else {
+        None
+    }
+}
+
+pub fn init() {
+    init_storage_manager();
+    init_ahci_controller();
+}

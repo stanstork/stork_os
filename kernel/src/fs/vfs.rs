@@ -1,16 +1,13 @@
-use super::{fat::fat_driver::FatDriver, vfs_directory_entry::VfsDirectoryEntry};
-use crate::{println, storage::STORAGE_MANAGER, sync::mutex::SpinMutex};
+use super::{
+    fat::fat_driver::FatDriver,
+    vfs_dir_entry::{EntryType, VfsDirectoryEntry},
+};
+use crate::{println, storage::get_ahci_device, sync::mutex::SpinMutex};
 use alloc::{
     collections::btree_map::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
-
-// Enum to specify the type of entry to create
-enum EntryType {
-    Directory,
-    File,
-}
 
 pub(crate) struct MountInfo {
     pub device: String,
@@ -18,28 +15,28 @@ pub(crate) struct MountInfo {
     pub driver: String,
 }
 
-pub struct FileSystem {
+pub struct VirtualFileSystem {
     mount_points: BTreeMap<String, FatDriver>,
     mount_info: BTreeMap<String, MountInfo>,
 }
 
-impl FileSystem {
+impl VirtualFileSystem {
     pub const fn new() -> Self {
-        FileSystem {
+        VirtualFileSystem {
             mount_points: BTreeMap::new(),
             mount_info: BTreeMap::new(),
         }
     }
 
     pub fn mount(&mut self, device_name: &str, path: &str, driver_name: &str) {
-        let device = unsafe { STORAGE_MANAGER.get_ahci_device(device_name) };
+        let device = get_ahci_device(device_name);
         if let Some(device) = device {
             if self.mount_points.contains_key(path) {
                 println!("Path {} already mounted", path);
                 return;
             }
 
-            let driver = FatDriver::mount(*device);
+            let driver = FatDriver::mount(device);
             self.mount_points.insert(path.to_string(), driver);
             self.mount_info.insert(
                 path.to_string(),
@@ -79,14 +76,18 @@ impl FileSystem {
         }
     }
 
-    pub fn list_directory(&self, path: &str) -> Option<Vec<VfsDirectoryEntry>> {
+    pub fn create_dir(&self, path: &str) {
+        self.create_entry(path, EntryType::Directory);
+    }
+
+    pub fn read_dir(&self, path: &str) -> Option<Vec<VfsDirectoryEntry>> {
         // Get driver and resolve the target cluster
         let (driver, current_cluster) = self.resolve_target_cluster(path)?;
         unsafe { Some(driver.get_dir_entries(current_cluster)) }
     }
 
-    pub fn create_directory(&self, path: &str) {
-        self.create_entry(path, EntryType::Directory);
+    pub fn remove_dir(&self, path: &str) {
+        self.delete_entry(path, EntryType::Directory);
     }
 
     pub fn create_file(&self, path: &str) {
@@ -114,12 +115,8 @@ impl FileSystem {
         }
     }
 
-    pub fn delete_file(&self, path: &str) {
+    pub fn remove_file(&self, path: &str) {
         self.delete_entry(path, EntryType::File);
-    }
-
-    pub fn delete_directory(&self, path: &str) {
-        self.delete_entry(path, EntryType::Directory);
     }
 
     pub fn exists(&self, path: &str) -> bool {
@@ -254,4 +251,4 @@ impl FileSystem {
     }
 }
 
-pub static mut FS: SpinMutex<FileSystem> = SpinMutex::new(FileSystem::new());
+pub static mut FS: SpinMutex<VirtualFileSystem> = SpinMutex::new(VirtualFileSystem::new());

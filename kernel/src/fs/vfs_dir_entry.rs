@@ -1,8 +1,12 @@
 use super::fat::{
-    directory_entry::DirectoryEntry, fat_driver::ATTR_DIRECTORY,
-    long_directory_entry::LongDirectoryEntry,
+    dir_entry::DirectoryEntry, fat_driver::ATTR_DIRECTORY, long_dir_entry::LongDirectoryEntry,
 };
 use alloc::{string::String, vec::Vec};
+
+pub enum EntryType {
+    Directory,
+    File,
+}
 
 pub struct VfsDirectoryEntry {
     pub entry: DirectoryEntry,
@@ -18,29 +22,30 @@ impl VfsDirectoryEntry {
         sector: u32,
         offset: u32,
     ) -> Self {
+        let name = Self::parse_name(&entry, lfn_entries);
+        lfn_entries.clear(); // Clear LFN entries after parsing name
+
         VfsDirectoryEntry {
             entry,
-            name: Self::parse_name(entry, lfn_entries),
+            name,
             sector,
             offset,
         }
     }
 
     pub fn get_cluster(&self) -> u32 {
-        self.entry.high_cluster as u32 | self.entry.low_cluster as u32
+        (self.entry.high_cluster as u32) << 16 | (self.entry.low_cluster as u32)
     }
 
     pub fn is_dir(&self) -> bool {
         self.entry.attributes & ATTR_DIRECTORY != 0
     }
 
-    fn parse_name(entry: DirectoryEntry, lfn_entries: &mut Vec<LongDirectoryEntry>) -> String {
+    fn parse_name(entry: &DirectoryEntry, lfn_entries: &mut Vec<LongDirectoryEntry>) -> String {
         if lfn_entries.is_empty() {
             Self::parse_short_filename(entry.name.as_ptr())
         } else {
-            let long_name = Self::parse_long_filename(lfn_entries);
-            lfn_entries.clear();
-            long_name
+            Self::parse_long_filename(lfn_entries)
         }
     }
 

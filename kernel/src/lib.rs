@@ -85,40 +85,14 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         // test_proc();
 
         pci::PCI::scan();
-        ahci::init();
+        storage::init();
 
-        let mut vfs = fs::VirtualFileSystem::new();
-        let ahci_device = STORAGE_MANAGER.get_ahci_device("AHCI0").unwrap();
-        vfs.mount(
-            ahci_device.clone(),
-            String::from("/"),
-            String::from("FAT32"),
-        );
-
-        // let fat_driver = vfs.get_driver("/").unwrap();
-
-        // fat_driver.create_dir("test_dir");
-        // fat_driver.create_file("test_dir/test_file.txt");
-
-        // let content = "Hello, World!";
-        // fat_driver.write_file(
-        //     "test_dir/test_file.txt",
-        //     content.as_ptr() as *mut u8,
-        //     content.len(),
-        // );
-
-        // let entries = fat_driver.get_dir_entries(fat_driver.fs.root_dir_cluster);
-        // for entry in entries {
-        //     let size = entry.entry.size;
-        //     println!("Name: {}, size: {}", entry.name, size);
-        // }
-
-        let mut fs2 = fs::fs2::FileSystem::new();
-        fs2.mount("AHCI0", "/", "FAT32");
+        let mut vfs = fs::vfs::VirtualFileSystem::new();
+        vfs.mount("AHCI0", "/", "FAT32");
 
         println!("Listing directory /");
 
-        let list_directory = fs2.list_directory("/");
+        let list_directory = vfs.read_dir("/");
         if let Some(entries) = list_directory {
             for entry in entries {
                 println!("Name: {}", entry.name);
@@ -126,15 +100,15 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         }
 
         let buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        fs2.read_file("/test.txt", buffer);
+        vfs.read_file("/test.txt", buffer);
 
         print_buffer_text(buffer, 512);
 
-        fs2.create_file("/test2.txt");
+        vfs.create_file("/test2.txt");
 
         println!("Listing directory /");
 
-        let list_directory = fs2.list_directory("/");
+        let list_directory = vfs.read_dir("/");
         if let Some(entries) = list_directory {
             for entry in entries {
                 println!("Name: {}", entry.name);
@@ -142,21 +116,21 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         }
 
         let content = "Hello, World!";
-        fs2.write_file("/test2.txt", content.as_ptr() as *mut u8, content.len());
+        vfs.write_file("/test2.txt", content.as_ptr() as *mut u8, content.len());
 
         let buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        fs2.read_file("/test2.txt", buffer);
+        vfs.read_file("/test2.txt", buffer);
 
         print_buffer_text(buffer, content.len());
 
-        fs2.create_directory("/test_dir");
-        fs2.create_file("/test_dir/test_file.txt");
+        vfs.create_dir("/test_dir");
+        vfs.create_file("/test_dir/test_file.txt");
 
-        fs2.delete_file("/test2.txt");
+        vfs.remove_file("/test2.txt");
 
         println!("Listing directory /");
 
-        let list_directory = fs2.list_directory("/");
+        let list_directory = vfs.read_dir("/");
         if let Some(entries) = list_directory {
             for entry in entries {
                 println!("Name: {}", entry.name);

@@ -1,16 +1,16 @@
-use super::boot_sector::Fat32BootSector;
+use super::{boot_sector::Fat32BootSector, calculate_checksum, create_short_filename};
 use crate::{
     fs::{
         fat::{
-            directory_entry::DirectoryEntry,
-            long_directory_entry::{create_lfn_entries, LongDirectoryEntry},
+            dir_entry::DirectoryEntry,
+            long_dir_entry::{create_lfn_entries, LongDirectoryEntry},
         },
-        vfs_directory_entry::VfsDirectoryEntry,
+        vfs_dir_entry::VfsDirectoryEntry,
     },
     memory, print, println,
-    storage::ahci_device::AhciDevice,
+    storage::ahci::ahci_device::AhciDevice,
 };
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 use core::{intrinsics::size_of, slice::from_raw_parts};
 
 pub struct FileSystemInfo {
@@ -128,7 +128,7 @@ impl FatDriver {
             let sector = self.get_sector(cluster);
 
             for i in 0..self.fs.sectors_per_cluster {
-                self.device.read(
+                self.device.read_sectors(
                     unsafe { buffer.add(buffer_offset) },
                     sector as u64 + i as u64,
                     1,
@@ -233,7 +233,7 @@ impl FatDriver {
 
             // Read the sector where the new directory is located
             let buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
-            self.device.read(buffer, sector as u64, 1);
+            self.device.read_sectors(buffer, sector as u64, 1);
 
             // Write the "." entry at the beginning of the directory
             core::ptr::write_volatile(buffer as *mut DirectoryEntry, dot_entry);
@@ -245,7 +245,7 @@ impl FatDriver {
             );
 
             // Write the buffer back to the disk
-            self.device.write(buffer, sector as u64, 1);
+            self.device.write_sectors(buffer, sector as u64, 1);
         }
     }
 
@@ -257,7 +257,7 @@ impl FatDriver {
         let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
         // Read the sector into the buffer
-        self.device.read(read_buffer, sector as u64, 1);
+        self.device.read_sectors(read_buffer, sector as u64, 1);
 
         // Get a pointer to the directory entry within the buffer
         let entry_ptr = unsafe { read_buffer.add(offset as usize) as *mut DirectoryEntry };
@@ -268,12 +268,12 @@ impl FatDriver {
         }
 
         // Write the modified sector back to the device
-        self.device.write(read_buffer, sector as u64, 1);
+        self.device.write_sectors(read_buffer, sector as u64, 1);
     }
 
     fn read_boot_sector(device: &AhciDevice) -> Fat32BootSector {
         let read_buffer = crate::memory::allocate_dma_buffer(512) as *mut u8;
-        device.read(read_buffer, 0, 1);
+        device.read_sectors(read_buffer, 0, 1);
         unsafe { *(read_buffer as *const Fat32BootSector) }
     }
 
@@ -305,7 +305,7 @@ impl FatDriver {
     fn read_sector(&self, sector: u32, offset: u32) -> *mut u8 {
         let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
         self.device
-            .read(read_buffer, sector as u64 + offset as u64, 1);
+            .read_sectors(read_buffer, sector as u64 + offset as u64, 1);
         read_buffer
     }
 
@@ -363,7 +363,7 @@ impl FatDriver {
         let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
         // Read the FAT sector into the buffer
-        self.device.read(read_buffer, fat_sector as u64, 1);
+        self.device.read_sectors(read_buffer, fat_sector as u64, 1);
 
         // Extract the next cluster value from the FAT entry
         let next_cluster = unsafe {
@@ -382,7 +382,7 @@ impl FatDriver {
         let buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
         // Read the FAT sector into the buffer
-        self.device.read(buffer, fat_sector as u64, 1);
+        self.device.read_sectors(buffer, fat_sector as u64, 1);
 
         // Calculate the pointer to the FAT entry within the buffer
         let entry_ptr = buffer.add(fat_offset as usize) as *mut u32;
@@ -391,7 +391,7 @@ impl FatDriver {
         *entry_ptr = (*entry_ptr & 0xF0000000) | (next_cluster & 0x0FFFFFFF);
 
         // Write the modified FAT sector back to the device
-        self.device.write(buffer, fat_sector as u64, 1);
+        self.device.write_sectors(buffer, fat_sector as u64, 1);
     }
 
     fn get_fat_sector(&self, cluster: u32) -> (u32, u32) {
@@ -413,8 +413,8 @@ impl FatDriver {
         }
 
         // Generate short filename and calculate checksum
-        let short_name = DirectoryEntry::create_short_filename(name);
-        let checksum = DirectoryEntry::calculate_checksum(&short_name);
+        let short_name = create_short_filename(name);
+        let checksum = calculate_checksum(&short_name);
 
         // Generate LFN entries
         let lfn_entries = create_lfn_entries(name, checksum);
@@ -455,7 +455,8 @@ impl FatDriver {
 
                 entry_sector = self.get_sector(entry_cluster);
                 // Load the next sector into the buffer
-                self.device.read(read_buffer, entry_sector as u64, 1);
+                self.device
+                    .read_sectors(read_buffer, entry_sector as u64, 1);
             }
         }
 
@@ -468,7 +469,8 @@ impl FatDriver {
         );
 
         // Write the buffer back to disk
-        self.device.write(read_buffer, entry_sector as u64, 1);
+        self.device
+            .write_sectors(read_buffer, entry_sector as u64, 1);
 
         Some(cluster) // Return the cluster of the new entry
     }
@@ -549,7 +551,7 @@ impl FatDriver {
 
         if bytes_to_write < self.fs.bytes_per_sector as usize {
             // Partial sector write
-            self.device.read(write_buffer, sector, 1);
+            self.device.read_sectors(write_buffer, sector, 1);
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     buffer.add(written_bytes),
@@ -568,7 +570,7 @@ impl FatDriver {
             }
         }
 
-        self.device.write(write_buffer, sector, 1);
+        self.device.write_sectors(write_buffer, sector, 1);
     }
 
     fn update_entry(&self, node: &VfsDirectoryEntry, size: usize) {
@@ -583,7 +585,7 @@ impl FatDriver {
         let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
         // Read the sector into the buffer
-        self.device.read(read_buffer, sector as u64, 1);
+        self.device.read_sectors(read_buffer, sector as u64, 1);
 
         // Get the pointer to the entry location in the buffer
         let entry_ptr = unsafe { read_buffer.add(offset as usize) } as *mut DirectoryEntry;
@@ -596,7 +598,7 @@ impl FatDriver {
         }
 
         // Write the modified sector back to the device
-        self.device.write(read_buffer, sector as u64, 1);
+        self.device.write_sectors(read_buffer, sector as u64, 1);
     }
 
     unsafe fn clear_cluster(&self, cluster: u32) {
@@ -608,7 +610,8 @@ impl FatDriver {
 
         // Write zeroed buffer to all sectors in the cluster
         for i in 0..self.fs.sectors_per_cluster {
-            self.device.write(buffer, sector as u64 + i as u64, 1);
+            self.device
+                .write_sectors(buffer, sector as u64 + i as u64, 1);
         }
     }
 

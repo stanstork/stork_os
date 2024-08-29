@@ -1,6 +1,5 @@
-use alloc::vec::Vec;
-
 use super::fat_driver::ENTRY_LONG;
+use alloc::vec::Vec;
 
 #[derive(Clone, Copy)]
 #[repr(C, packed)]
