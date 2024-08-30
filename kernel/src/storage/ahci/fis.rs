@@ -79,3 +79,38 @@ impl Default for FisRegisterHostToDevice {
         }
     }
 }
+
+impl FisRegisterHostToDevice {
+    pub fn read_command(sector: u64, sector_count: u64) -> Self {
+        Self::new(Command::ATA_READ, sector, sector_count)
+    }
+
+    pub fn write_command(sector: u64, sector_count: u64) -> Self {
+        Self::new(Command::ATA_WRITE, sector, sector_count)
+    }
+
+    pub fn identify_command() -> Self {
+        Self::new(Command::ATA_IDENTIFY, 0, 0)
+    }
+
+    fn new(command: Command, sector: u64, sector_count: u64) -> Self {
+        FisRegisterHostToDevice {
+            type_: FisType::REGISTER_HOST_TO_DEVICE,
+            flags: FisRegisterHostToDeviceType::new()
+                .with_port_multiplier_port(0)
+                .with_reserved1(0)
+                .with_command_control(true),
+            command: command as u8,
+            device: 1 << 6, // LBA mode
+            feature_low: 1, // DMA mode
+            lba0: (sector & 0xFF) as u8,
+            lba1: ((sector >> 8) & 0xFF) as u8,
+            lba2: ((sector >> 16) & 0xFF) as u8,
+            lba3: (sector >> 24) as u8,
+            count_low: (sector_count & 0xff) as u8,
+            count_high: ((sector_count >> 8) & 0xff) as u8,
+            control: 1,
+            ..Default::default()
+        }
+    }
+}

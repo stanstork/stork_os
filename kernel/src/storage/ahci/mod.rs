@@ -42,3 +42,29 @@ pub fn write_sectors(port: usize, buffer: *mut u8, start_sector: u64, sectors_co
         unsafe { controller.write(port, buffer, start_sector, sectors_count) };
     }
 }
+
+pub(crate) fn byte_swap_string(string: &mut [u8]) {
+    let length = string.len();
+    for i in (0..length).step_by(2) {
+        if i + 1 < length {
+            string.swap(i, i + 1);
+        }
+    }
+}
+
+pub(crate) fn print_device_info(identity: &SataIdentity) {
+    println!(
+        "Serial No: {:?}",
+        core::str::from_utf8(&identity.serial_no)
+            .unwrap_or("")
+            .trim()
+    );
+    println!(
+        "Model: {:?}",
+        core::str::from_utf8(&identity.model).unwrap_or("").trim()
+    );
+    println!(
+        "Firmware Revision: {:?}",
+        core::str::from_utf8(&identity.fw_rev).unwrap_or("").trim()
+    );
+}

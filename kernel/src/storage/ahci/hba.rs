@@ -1,5 +1,11 @@
-use crate::{cpu::io::sleep_for, println};
+use super::fis::FisRegisterHostToDevice;
+use crate::{
+    cpu::io::sleep_for,
+    memory, println,
+    storage::ahci::ahci_controller::{AHCI_ENABLE, AHCI_ENABLE_TIMEOUT},
+};
 use bitfield_struct::bitfield;
+use core::mem::size_of;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -174,5 +180,139 @@ impl HbaPort {
         // Set FRE (bit 4) and ST (bit 0) to start the port
         self.command |= CMD_FIS_RECEIVE_ENABLE_BIT;
         self.command |= CMD_START_BIT;
+    }
+
+    pub unsafe fn clear_errors(&mut self) {
+        self.sata_error = 0xffffffff; // Clear SATA error register
+        self.interrupt_status = 0xffffffff; // Clear interrupt status register
+        self.interrupt_enable = 0x00000000; // Disable all port interrupts
+    }
+
+    pub fn rebase(&mut self) {
+        // Ensure no commands are running before rebasing
+        self.stop_command();
+
+        // Allocate memory for the command list (1 page) and map it to an I/O accessible address
+        let command_list_base = memory::map_io_pages(1) as u32;
+
+        if command_list_base == 0 {
+            println!("Failed to allocate memory for the command list.");
+            return;
+        }
+
+        // Set the command list base and upper base address for the port
+        self.command_list_base = command_list_base;
+        self.command_list_base_upper = 0;
+
+        // Port is ready to process commands
+        self.start_command();
+    }
+
+    pub fn find_cmd_slot(&self) -> Option<usize> {
+        let slots = (self.sata_active | self.command_issue) as u8;
+        for i in 0..32 {
+            if (slots & (1 << i)) == 0 {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn get_cmd_header(&self, slot: usize) -> &mut HbaCommandHeader {
+        unsafe {
+            &mut *((self.command_list_base as u64
+                + (slot as u64 * size_of::<HbaCommandHeader>() as u64))
+                as *mut HbaCommandHeader)
+        }
+    }
+}
+
+impl HbaRegs {
+    /// Returns the HBA port at the specified index.
+    pub fn port(&self, index: usize) -> &HbaPort {
+        &self.ports[index]
+    }
+
+    /// Returns the mutable HBA port at the specified index.
+    pub fn port_mut(&mut self, index: usize) -> &mut HbaPort {
+        &mut self.ports[index]
+    }
+
+    /// Returns the number of implemented ports.
+    pub fn ports_count(&self) -> usize {
+        let max_ports = self.ports.len() as u32;
+        let port_count = (self.host_capabilities & 0x1F) + 1;
+        port_count.min(max_ports) as usize
+    }
+
+    pub fn enable_ahci(&mut self) -> bool {
+        let mut elapsed_time = 0;
+
+        // Set the AHCI Enable bit in the global host control register
+        self.global_host_control |= AHCI_ENABLE;
+
+        // Wait until the AHCI Enable bit is set or until timeout
+        while (self.global_host_control & AHCI_ENABLE) == 0 && elapsed_time < AHCI_ENABLE_TIMEOUT {
+            sleep_for(10); // Sleep for 10 milliseconds
+            elapsed_time += 10;
+        }
+
+        // Check if AHCI Enable bit is still not set after the timeout
+        if (self.global_host_control & AHCI_ENABLE) == 0 {
+            println!("Failed to enable AHCI after {} ms", elapsed_time);
+            return false;
+        }
+
+        // Clear all pending interrupts
+        self.interrupt_status = 0xFFFFFFFF;
+
+        println!("AHCI enabled successfully");
+        true
+    }
+}
+
+impl HbaCommandHeader {
+    pub fn setup(&mut self, buf_phys_addr: u64, prdt_len: u16, fis: FisRegisterHostToDevice) {
+        self.command_table_base = buf_phys_addr as u32;
+        self.command_table_base_upper = (buf_phys_addr >> 32) as u32;
+        self.dword0.set_command_fis_length(
+            (size_of::<FisRegisterHostToDevice>() / size_of::<u32>()) as u8,
+        );
+        self.dword0.set_prdt_length(prdt_len);
+
+        let fis_ptr = self.command_table_base as *mut FisRegisterHostToDevice;
+        unsafe { fis_ptr.write_volatile(fis) };
+    }
+
+    pub fn get_command_table(&self) -> *mut HbaCommandTable {
+        // Calculate the base address of the command table
+        let table_base = self.command_table_base as u64;
+        let table_upper_base = self.command_table_base_upper as u64;
+        let cmd_tbl_addr = (table_base + table_upper_base) as *mut HbaCommandTable;
+
+        cmd_tbl_addr
+    }
+}
+
+impl HbaCommandTable {
+    pub fn setup(&mut self, buf_phys_addr: u64, buf_size: usize, is_write: bool, dma_buf: *mut u8) {
+        // Set up the Physical Region Descriptor Table entry for the buffer
+        self.physical_region_descriptor_table[0] = HbaPhysicalRegionDescriptorTableEntry {
+            data_base_address: if is_write {
+                dma_buf as u32
+            } else {
+                buf_phys_addr as u32
+            },
+            data_base_address_upper: if is_write {
+                (dma_buf as u64 >> 32) as u32
+            } else {
+                (buf_phys_addr >> 32) as u32
+            },
+            reserved1: 0,
+            data_byte_count_reserved2_interrupt: DataByteCountReserved2Interrupt::new()
+                .with_data_byte_count(buf_size as u32)
+                .with_reserved2(0)
+                .with_interrupt_on_completion(0),
+        };
     }
 }
