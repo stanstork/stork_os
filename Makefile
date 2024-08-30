@@ -8,10 +8,11 @@ BOOTLOADER_BINARY := ${BUILD_DIR}/bootx64.efi
 DISK_IMG          := ${BUILD_DIR}/kernel.img
 DISK_IMG_SIZE     := 2880
 
-QEMU_FLAGS :=                                                \
-	-bios ${BOOTLOADER_DIR}/OVMF_CODE-pure-efi.fd                                            \
-    -drive if=none,id=uas-disk1,file=${DISK_IMG},format=raw    \
-    -device usb-storage,drive=uas-disk1                        \
+QEMU_FLAGS :=                                                  \
+	-bios ${BOOTLOADER_DIR}/OVMF_CODE-pure-efi.fd               \
+    -drive id=disk,file=${DISK_IMG},format=raw,if=none          \
+    -device ahci,id=ahci-controller                             \
+    -device ide-hd,drive=disk,bus=ahci-controller.0             \
     -serial stdio                                              \
     -usb                                                       \
     -net none                                                  \
@@ -41,7 +42,7 @@ kernel: ${KERNEL_BINARY}
 
 ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} 
 	# Create UEFI boot disk image in DOS format.
-	dd if=/dev/zero of=${DISK_IMG} bs=512 count=93750
+	dd if=/dev/zero of=${DISK_IMG} bs=1M count=512
 	mformat -i ${DISK_IMG} -F ::
 	mmd -i ${DISK_IMG} ::/EFI
 	mmd -i ${DISK_IMG} ::/EFI/BOOT
@@ -49,6 +50,7 @@ ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY}
 	mcopy -i ${DISK_IMG} ${BOOTLOADER_BINARY} ::/efi/boot/bootx64.efi
 	mcopy -i ${DISK_IMG} assets/fonts/zap-light16.psf ::/zap-light16.psf
 	mcopy -i ${DISK_IMG} ${KERNEL_BINARY} ::/kernel.elf
+	mcopy -i ${DISK_IMG} assets/fsdata/test.txt ::/test.txt
 
 ${BOOTLOADER_BINARY}:
 	make -C ${BOOTLOADER_DIR}

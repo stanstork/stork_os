@@ -1,0 +1,8 @@
+This is a test file.
+It is used for testing the file system implementation in the kernel.
+The quick brown fox jumps over the lazy dog.
+1234567890
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+abcdefghijklmnopqrstuvwxyz
+
+End of test file.

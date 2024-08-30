@@ -23,7 +23,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptSta
         TIMER.tick += 1;
     }
     // Print a dot for each timer tick (for debugging).
-    print!(".");
+    // print!(".");
 
     // Send the End of Interrupt (EOI) signal.
     end_of_interrupt();

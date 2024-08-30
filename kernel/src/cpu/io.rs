@@ -86,6 +86,33 @@ pub fn inw(port: u16) -> u16 {
     result
 }
 
+/// Writes a 16-bit word to a specified hardware port.
+pub fn outl(port: u16, data: u32) {
+    unsafe {
+        asm!(
+            "out dx, eax",
+            in("dx") port,
+            in("eax") data,
+            options(nostack)
+        );
+    }
+}
+
+pub fn inl(port: u16) -> u32 {
+    let result: u32;
+
+    unsafe {
+        asm!(
+            "in eax, dx",
+            out("eax") result,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+
+    result
+}
+
 /// Waits for I/O operations to complete.
 pub fn io_wait() {
     Port::new(0x80).write_port(0);
@@ -147,7 +174,9 @@ impl PortIO for u16 {
 
 pub fn sleep_for(milliseconds: u64) {
     let start = Rdtsc::read();
-    // Calculate the target number of cycles to wait for.
-    let target = start + milliseconds + 1_0000_0000; // 1 ms = 1_0000_0000 cycles
+    let cpu_frequency = 1_000_000_000; // TODO: Adjust this to match CPU's frequency in Hz
+    let cycles_per_ms = cpu_frequency / 1_000; // Convert frequency to cycles per millisecond
+    let target = start + milliseconds * cycles_per_ms;
+
     while Rdtsc::read() < target {}
 }

@@ -4,16 +4,15 @@
 #![feature(naked_functions)] // enable naked functions
 #![feature(core_intrinsics)] // enable core intrinsics
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
+#![feature(str_from_raw_parts)] // enable str::from_raw_parts
 
 use acpi::rsdp;
+use alloc::string::String;
 use apic::APIC;
 use core::{arch::asm, panic::PanicInfo};
-use drivers::{
-    keyboard::KEYBOARD,
-    screen::display::{self, DISPLAY},
-};
+use drivers::screen::display::{self, DISPLAY};
 use interrupts::{
-    isr::{self, IDT, KEYBOARD_IRQ},
+    isr::{self, KEYBOARD_IRQ},
     no_interrupts,
 };
 use memory::global_allocator::GlobalAllocator;
@@ -33,10 +32,13 @@ mod arch;
 mod cpu;
 mod data_types;
 mod drivers;
+mod fs;
 mod gdt;
 mod interrupts;
 mod memory;
+mod pci;
 mod registers;
+mod storage;
 mod structures;
 mod sync;
 mod tasks;
@@ -76,10 +78,34 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         apic::enable_apic_mode(); // enable the APIC mode
         APIC.lock().enable_irq(KEYBOARD_IRQ as u8); // enable the keyboard interrupt
 
-        test_proc();
+        pci::PCI::scan_pci_bus();
+        storage::init();
+
+        test_fs();
+        // test_proc();
     }
 
     loop {}
+}
+
+pub fn print_buffer_text(buffer: *mut u8, length: usize) {
+    // Convert the raw pointer to a slice
+    let buffer_slice = unsafe { core::slice::from_raw_parts(buffer, length) };
+
+    // Try to convert the slice to a String
+    match core::str::from_utf8(buffer_slice) {
+        Ok(text) => {
+            println!("{}", text); // Print valid UTF-8 text
+        }
+        Err(_) => {
+            // Handle non-UTF-8 data by printing a replacement character for invalid sequences
+            let valid_text = buffer_slice
+                .iter()
+                .map(|&b| if b.is_ascii() { b as char } else { '?' }) // Replace non-ASCII with '�'
+                .collect::<String>();
+            println!("{}", valid_text);
+        }
+    }
 }
 
 // this function is called on panic
@@ -141,6 +167,58 @@ extern "C" fn test_thread2() {
             for _ in 0..100_000 {
                 asm!("nop");
             }
+        }
+    }
+}
+
+fn test_fs() {
+    let mut vfs = fs::vfs::VirtualFileSystem::new();
+    vfs.mount("AHCI0", "/", "FAT32");
+
+    println!("Listing directory /");
+
+    let list_directory = vfs.read_dir("/");
+    if let Some(entries) = list_directory {
+        for entry in entries {
+            println!("Name: {}", entry.name);
+        }
+    }
+
+    let buffer = memory::allocate_dma_buffer(512) as *mut u8;
+    vfs.read_file("/test.txt", buffer);
+
+    print_buffer_text(buffer, 512);
+
+    vfs.create_file("/test2.txt");
+
+    println!("Listing directory /");
+
+    let list_directory = vfs.read_dir("/");
+    if let Some(entries) = list_directory {
+        for entry in entries {
+            println!("Name: {}", entry.name);
+        }
+    }
+
+    let content = "Hello, World!";
+    vfs.write_file("/test2.txt", content.as_ptr() as *mut u8, content.len());
+
+    let buffer = memory::allocate_dma_buffer(512) as *mut u8;
+    vfs.read_file("/test2.txt", buffer);
+
+    print_buffer_text(buffer, content.len());
+
+    vfs.create_dir("/test_dir");
+    vfs.create_file("/test_dir/test_file.txt");
+
+    vfs.remove_file("/test2.txt");
+
+    println!("Listing directory /");
+
+    let list_directory = vfs.read_dir("/");
+    if let Some(entries) = list_directory {
+        for entry in entries {
+            println!("Name: {}", entry.name);
         }
     }
 }

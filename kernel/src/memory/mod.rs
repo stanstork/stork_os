@@ -154,3 +154,24 @@ pub fn map_io(addr: u64) {
 
     unsafe { page_table_manager.map_io(virt_addr, phys_addr) };
 }
+
+pub fn map_io_pages(pages: usize) -> usize {
+    let root_page_table = active_level_4_table();
+    let mut page_table_manager = PageTableManager::new(root_page_table);
+    let mut start_addr = None;
+
+    for _ in 0..pages {
+        let phys_addr = unsafe { page_table_manager.alloc_zeroed_page() };
+        if start_addr.is_none() {
+            start_addr = Some(phys_addr);
+        }
+        unsafe { page_table_manager.map_io(VirtAddr(phys_addr.0), phys_addr) };
+    }
+
+    start_addr.unwrap().0
+}
+
+pub fn allocate_dma_buffer(size: usize) -> u64 {
+    let pages = (size / PAGE_SIZE) + 1;
+    map_io_pages(pages) as u64
+}
