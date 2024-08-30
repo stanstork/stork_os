@@ -16,10 +16,6 @@ use interrupts::{
     no_interrupts,
 };
 use memory::global_allocator::GlobalAllocator;
-use storage::{
-    ahci::{self},
-    STORAGE_MANAGER,
-};
 use structures::BootInfo;
 use tasks::{
     process::Process,
@@ -82,60 +78,11 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         apic::enable_apic_mode(); // enable the APIC mode
         APIC.lock().enable_irq(KEYBOARD_IRQ as u8); // enable the keyboard interrupt
 
-        // test_proc();
-
         pci::PCI::scan_pci_bus();
         storage::init();
 
-        let mut vfs = fs::vfs::VirtualFileSystem::new();
-        vfs.mount("AHCI0", "/", "FAT32");
-
-        println!("Listing directory /");
-
-        let list_directory = vfs.read_dir("/");
-        if let Some(entries) = list_directory {
-            for entry in entries {
-                println!("Name: {}", entry.name);
-            }
-        }
-
-        let buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        vfs.read_file("/test.txt", buffer);
-
-        print_buffer_text(buffer, 512);
-
-        vfs.create_file("/test2.txt");
-
-        println!("Listing directory /");
-
-        let list_directory = vfs.read_dir("/");
-        if let Some(entries) = list_directory {
-            for entry in entries {
-                println!("Name: {}", entry.name);
-            }
-        }
-
-        let content = "Hello, World!";
-        vfs.write_file("/test2.txt", content.as_ptr() as *mut u8, content.len());
-
-        let buffer = memory::allocate_dma_buffer(512) as *mut u8;
-        vfs.read_file("/test2.txt", buffer);
-
-        print_buffer_text(buffer, content.len());
-
-        vfs.create_dir("/test_dir");
-        vfs.create_file("/test_dir/test_file.txt");
-
-        vfs.remove_file("/test2.txt");
-
-        println!("Listing directory /");
-
-        let list_directory = vfs.read_dir("/");
-        if let Some(entries) = list_directory {
-            for entry in entries {
-                println!("Name: {}", entry.name);
-            }
-        }
+        test_fs();
+        // test_proc();
     }
 
     loop {}
@@ -220,6 +167,58 @@ extern "C" fn test_thread2() {
             for _ in 0..100_000 {
                 asm!("nop");
             }
+        }
+    }
+}
+
+fn test_fs() {
+    let mut vfs = fs::vfs::VirtualFileSystem::new();
+    vfs.mount("AHCI0", "/", "FAT32");
+
+    println!("Listing directory /");
+
+    let list_directory = vfs.read_dir("/");
+    if let Some(entries) = list_directory {
+        for entry in entries {
+            println!("Name: {}", entry.name);
+        }
+    }
+
+    let buffer = memory::allocate_dma_buffer(512) as *mut u8;
+    vfs.read_file("/test.txt", buffer);
+
+    print_buffer_text(buffer, 512);
+
+    vfs.create_file("/test2.txt");
+
+    println!("Listing directory /");
+
+    let list_directory = vfs.read_dir("/");
+    if let Some(entries) = list_directory {
+        for entry in entries {
+            println!("Name: {}", entry.name);
+        }
+    }
+
+    let content = "Hello, World!";
+    vfs.write_file("/test2.txt", content.as_ptr() as *mut u8, content.len());
+
+    let buffer = memory::allocate_dma_buffer(512) as *mut u8;
+    vfs.read_file("/test2.txt", buffer);
+
+    print_buffer_text(buffer, content.len());
+
+    vfs.create_dir("/test_dir");
+    vfs.create_file("/test_dir/test_file.txt");
+
+    vfs.remove_file("/test2.txt");
+
+    println!("Listing directory /");
+
+    let list_directory = vfs.read_dir("/");
+    if let Some(entries) = list_directory {
+        for entry in entries {
+            println!("Name: {}", entry.name);
         }
     }
 }
