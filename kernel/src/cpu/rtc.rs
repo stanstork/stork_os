@@ -1,6 +1,5 @@
-use crate::sync::mutex::SpinMutex;
-
 use super::io;
+use crate::sync::mutex::SpinMutex;
 
 pub struct RtClock {}
 

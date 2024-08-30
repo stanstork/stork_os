@@ -1,4 +1,8 @@
-use crate::{pci::PCI, println, sync::mutex::SpinMutex};
+use crate::{
+    pci::device_manager::{self},
+    println,
+    sync::mutex::SpinMutex,
+};
 use ahci_controller::AhciController;
 use sata_ident::SataIdentity;
 
@@ -14,7 +18,7 @@ pub const PCI_SUBCLASS_AHCI: u8 = 0x06;
 pub static mut AHCI_CONTROLLER: SpinMutex<Option<AhciController>> = SpinMutex::new(None);
 
 pub fn init_ahci_controller() {
-    let device = PCI::search_device(MASS_STORAGE, PCI_SUBCLASS_AHCI);
+    let device = device_manager::search_device(MASS_STORAGE, PCI_SUBCLASS_AHCI);
     if let Some(device) = device {
         let controller = unsafe { AhciController::init(device) };
         unsafe { AHCI_CONTROLLER = SpinMutex::new(Some(controller)) };

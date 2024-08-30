@@ -1,5 +1,3 @@
-use crate::println;
-
 #[derive(Debug, Copy, Clone)]
 pub struct PciClassCodeInfo {
     pub base_class: u8,
@@ -94,17 +92,13 @@ pub static PCI_CLASS_CODE_TABLE: [PciClassCodeInfo; 10] = [
 ];
 
 pub fn get_class_code_info(base_class: u8, sub_class: u8, prog_if: u8) -> Option<PciClassCodeInfo> {
-    println!(
-        "base_class: {:x}, sub_class: {:x}, prog_if: {:x}",
-        base_class, sub_class, prog_if
-    );
-    for entry in PCI_CLASS_CODE_TABLE.iter() {
-        if entry.base_class == base_class
-            && entry.sub_class == sub_class
-            && entry.prog_if == prog_if
-        {
-            return Some(*entry);
-        }
-    }
-    None
+    // Find the matching entry in the PCI_CLASS_CODE_TABLE
+    PCI_CLASS_CODE_TABLE
+        .iter()
+        .find(|&entry| {
+            entry.base_class == base_class
+                && entry.sub_class == sub_class
+                && entry.prog_if == prog_if
+        })
+        .copied() // Convert the reference to an owned value
 }

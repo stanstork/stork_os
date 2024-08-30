@@ -84,7 +84,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
         // test_proc();
 
-        pci::PCI::scan();
+        pci::PCI::scan_pci_bus();
         storage::init();
 
         let mut vfs = fs::vfs::VirtualFileSystem::new();

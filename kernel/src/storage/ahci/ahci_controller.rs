@@ -5,7 +5,7 @@ use super::{
 use crate::{
     cpu::io::sleep_for,
     memory::{self},
-    pci::device::PciDevice,
+    pci::pci_device::PciDevice,
     println,
     storage::{
         ahci::{ahci_device::AhciDevice, hba::DeviceSignature},

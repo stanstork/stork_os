@@ -19,11 +19,9 @@ pub static PCI_VENDOR_TABLE: [PciVendorTable; 3] = [
 ];
 
 pub fn get_vendor_name(vendor_id: u16) -> Option<&'static str> {
-    for vendor in PCI_VENDOR_TABLE.iter() {
-        if vendor.vendor_id == vendor_id {
-            return Some(vendor.vendor_name);
-        }
-    }
-
-    None
+    // Use `.find` for a more idiomatic search
+    PCI_VENDOR_TABLE
+        .iter()
+        .find(|&vendor| vendor.vendor_id == vendor_id)
+        .map(|vendor| vendor.vendor_name)
 }
