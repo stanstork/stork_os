@@ -1,13 +1,17 @@
+// Structure to store detailed information about a PCI device's class, subclass, and programming interface.
+// This struct is used to provide human-readable descriptions of PCI device types.
 #[derive(Debug, Copy, Clone)]
 pub struct PciClassCodeInfo {
-    pub base_class: u8,
-    pub sub_class: u8,
-    pub prog_if: u8,
-    pub base_desc: &'static str,
-    pub sub_desc: &'static str,
-    pub prog_desc: &'static str,
+    pub base_class: u8, // Base class code of the PCI device (e.g., 0x01 for Mass Storage Controller).
+    pub sub_class: u8, // Subclass code that provides more specific classification (e.g., 0x06 for SATA Controller).
+    pub prog_if: u8,   // Programming interface code (e.g., 0x01 for AHCI 1.0).
+    pub base_desc: &'static str, // Human-readable description of the base class.
+    pub sub_desc: &'static str, // Human-readable description of the subclass.
+    pub prog_desc: &'static str, // Human-readable description of the programming interface.
 }
 
+// Static array that holds predefined `PciClassCodeInfo` entries for common PCI device types.
+// This table is used to map PCI class codes to human-readable descriptions.
 pub static PCI_CLASS_CODE_TABLE: [PciClassCodeInfo; 10] = [
     PciClassCodeInfo {
         base_class: 0x01,
@@ -91,8 +95,8 @@ pub static PCI_CLASS_CODE_TABLE: [PciClassCodeInfo; 10] = [
     },
 ];
 
+// Function to retrieve the class code information from the `PCI_CLASS_CODE_TABLE` based on class, subclass, and programming interface.
 pub fn get_class_code_info(base_class: u8, sub_class: u8, prog_if: u8) -> Option<PciClassCodeInfo> {
-    // Find the matching entry in the PCI_CLASS_CODE_TABLE
     PCI_CLASS_CODE_TABLE
         .iter()
         .find(|&entry| {
@@ -100,5 +104,5 @@ pub fn get_class_code_info(base_class: u8, sub_class: u8, prog_if: u8) -> Option
                 && entry.sub_class == sub_class
                 && entry.prog_if == prog_if
         })
-        .copied() // Convert the reference to an owned value
+        .copied()
 }
