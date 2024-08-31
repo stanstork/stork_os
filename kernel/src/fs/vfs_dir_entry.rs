@@ -3,19 +3,34 @@ use super::fat::{
 };
 use alloc::{string::String, vec::Vec};
 
+// Represents the type of a directory entry (file or directory).
 pub enum EntryType {
     Directory,
     File,
 }
 
 pub struct VfsDirectoryEntry {
+    // The actual directory entry as read from the FAT file system.
     pub entry: DirectoryEntry,
+    // The name of the file or directory.
     pub name: String,
+    // The sector number where the directory entry is located.
     pub sector: u32,
+    // The offset of the directory entry within the sector.
     pub offset: u32,
 }
 
 impl VfsDirectoryEntry {
+    /// Creates a `VfsDirectoryEntry` from a given `DirectoryEntry` and corresponding long file name (LFN) entries.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - The directory entry containing metadata and location information.
+    /// * `lfn_entries` - A mutable vector of `LongDirectoryEntry` representing the long file name entries.
+    /// * `sector` - The sector number where the directory entry is located.
+    /// * `offset` - The byte offset within the sector where the directory entry starts.
+    ///
+    /// The function constructs a `VfsDirectoryEntry` and clears the LFN entries vector after use.
     pub fn from_entry(
         entry: DirectoryEntry,
         lfn_entries: &mut Vec<LongDirectoryEntry>,
@@ -33,14 +48,17 @@ impl VfsDirectoryEntry {
         }
     }
 
+    /// Retrieves the cluster number of the file or directory.
     pub fn get_cluster(&self) -> u32 {
         (self.entry.high_cluster as u32) << 16 | (self.entry.low_cluster as u32)
     }
 
+    /// Checks if the entry represents a directory.
     pub fn is_dir(&self) -> bool {
         self.entry.attributes & ATTR_DIRECTORY != 0
     }
 
+    // Parses the name of the file or directory from the directory entry and LFN entries.
     fn parse_name(entry: &DirectoryEntry, lfn_entries: &mut Vec<LongDirectoryEntry>) -> String {
         if lfn_entries.is_empty() {
             Self::parse_short_filename(entry.name.as_ptr())

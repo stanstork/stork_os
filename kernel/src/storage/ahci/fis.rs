@@ -1,5 +1,6 @@
 use bitfield_struct::bitfield;
 
+/// Represents the different types of FIS (Frame Information Structure) used in AHCI communication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FisType {
@@ -13,6 +14,7 @@ pub enum FisType {
     DEVICE_BITS = 0xa1,
 }
 
+/// Enum representing the various ATA commands used in AHCI communication.
 #[repr(u8)]
 pub enum Command {
     ATA_IDENTIFY = 0xEC,
@@ -81,18 +83,44 @@ impl Default for FisRegisterHostToDevice {
 }
 
 impl FisRegisterHostToDevice {
+    /// Creates a new FIS for a READ command to a SATA device.
+    ///
+    /// # Parameters
+    ///
+    /// - `sector`: The starting sector (LBA) on the device to read from.
+    /// - `sector_count`: The number of sectors to read.
+    ///
+    /// # Returns
+    ///
+    /// A new `FisRegisterHostToDevice` configured for a READ command.
     pub fn read_command(sector: u64, sector_count: u64) -> Self {
         Self::new(Command::ATA_READ, sector, sector_count)
     }
 
+    /// Creates a new FIS for a WRITE command to a SATA device.
+    ///
+    /// # Parameters
+    ///
+    /// - `sector`: The starting sector (LBA) on the device to write to.
+    /// - `sector_count`: The number of sectors to write.
+    ///
+    /// # Returns
+    ///
+    /// A new `FisRegisterHostToDevice` configured for a WRITE command.
     pub fn write_command(sector: u64, sector_count: u64) -> Self {
         Self::new(Command::ATA_WRITE, sector, sector_count)
     }
 
+    /// Creates a new FIS for an IDENTIFY DEVICE command to a SATA device.
+    ///
+    /// # Returns
+    ///
+    /// A new `FisRegisterHostToDevice` configured for an IDENTIFY DEVICE command.
     pub fn identify_command() -> Self {
         Self::new(Command::ATA_IDENTIFY, 0, 0)
     }
 
+    /// Helper function to create a new `FisRegisterHostToDevice` with the specified command, sector, and sector count.
     fn new(command: Command, sector: u64, sector_count: u64) -> Self {
         FisRegisterHostToDevice {
             type_: FisType::REGISTER_HOST_TO_DEVICE,

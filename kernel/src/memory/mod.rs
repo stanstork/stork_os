@@ -175,3 +175,7 @@ pub fn allocate_dma_buffer(size: usize) -> u64 {
     let pages = (size / PAGE_SIZE) + 1;
     map_io_pages(pages) as u64
 }
+
+pub fn deallocate_dma_buffer(phys_addr: u64, size: usize) {
+    todo!("Implement deallocate_dma_buffer");
+}

@@ -14,64 +14,99 @@ use alloc::vec::Vec;
 use core::{intrinsics::size_of, slice::from_raw_parts};
 
 pub struct FileSystemInfo {
+    // The starting sector of the file system on the device.
     pub start_sector: u64,
+    // Total number of sectors in the file system.
     pub sectors_count: u64,
+    // Number of bytes per sector, a typical value is 512 bytes.
     pub bytes_per_sector: u16,
+    // Number of sectors occupied by the root directory.
     pub root_sectors: u32,
+    // Number of sectors per cluster, the smallest unit of allocation.
     pub sectors_per_cluster: u8,
+    // Size of each cluster in bytes, calculated as `bytes_per_sector * sectors_per_cluster`.
     pub cluster_size: u32,
+    // The first data sector where the cluster chain for files and directories begins.
     pub first_data_sector: u32,
+    // The first sector of the File Allocation Table (FAT).
     pub first_fat_sector: u32,
+    // The cluster number where the root directory starts, typically 2 for FAT32.
     pub root_dir_cluster: u32,
+    // Total number of clusters in the file system.
     pub total_clusters: u32,
+    // Maximum number of entries in the root directory (for FAT12/FAT16); typically 0 for FAT32.
     pub root_dir_entries: u16,
 }
 
 pub struct FatDriver {
+    // File system information, including sector and cluster details.
     pub(crate) fs: FileSystemInfo,
+    // The underlying device on which the file system is mounted.
     pub(crate) device: AhciDevice,
 }
 
-pub const CLUSTER_FREE: u32 = 0x00000000;
-pub const CLUSTER_RESERVED: u32 = 0x0FFFFFF0;
-pub const CLUSTER_BAD: u32 = 0x0FFFFFF7;
-pub const CLUSTER_LAST: u32 = 0x0FFFFFF8;
+// Constants representing different cluster statuses in the FAT.
+pub const CLUSTER_FREE: u32 = 0x00000000; // Free cluster
+pub const CLUSTER_RESERVED: u32 = 0x0FFFFFF0; // Reserved cluster range
+pub const CLUSTER_BAD: u32 = 0x0FFFFFF7; // Bad cluster, unusable
+pub const CLUSTER_LAST: u32 = 0x0FFFFFF8; // Last cluster in a file (EOF marker)
 
-pub const ENTRY_END: u8 = 0x00;
-pub const ENTRY_FREE: u8 = 0xE5;
-pub const ENTRY_DELETED: u8 = 0x05;
-pub const ENTRY_LONG: u8 = 0x0F;
+// Constants representing different directory entry statuses and attributes.
+pub const ENTRY_END: u8 = 0x00; // Indicates the end of the directory entries
+pub const ENTRY_FREE: u8 = 0xE5; // Indicates a free directory entry
+pub const ENTRY_DELETED: u8 = 0x05; // Indicates a deleted directory entry (with first byte set to 0x05)
+pub const ENTRY_LONG: u8 = 0x0F; // Attribute for long file name entry
 
-pub const ATTR_DIRECTORY: u8 = 0x10;
+pub const ATTR_DIRECTORY: u8 = 0x10; // Attribute flag indicating an entry is a directory
 
 impl FatDriver {
+    /// Mounts the FAT file system on the given device.
+    ///
+    /// This function reads the boot sector from the device and calculates various parameters
+    /// necessary for managing the file system, such as cluster size, data sector offsets,
+    /// and total number of clusters. It initializes a `FileSystemInfo` struct with these parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The AHCI device on which the FAT file system resides.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new instance of `FatDriver` initialized with the file system information and device.
     pub fn mount(device: AhciDevice) -> Self {
+        // Read the boot sector from the device to obtain fundamental file system parameters.
         let boot_sector = Self::read_boot_sector(&device);
 
-        // Compute values based on the boot sector
-        let bytes_per_sector = boot_sector.bytes_per_sector as u32;
+        // Compute various file system values based on the information retrieved from the boot sector.
+        let bytes_per_sector = boot_sector.bytes_per_sector as u32; // Number of bytes per sector.
         let root_sectors = ((boot_sector.root_dir_entries as u32 * 32) + (bytes_per_sector - 1))
-            / bytes_per_sector;
-        let first_fat_sector = boot_sector.reserved_sectors as u32;
+            / bytes_per_sector; // Calculate the number of sectors needed for the root directory.
+        let first_fat_sector = boot_sector.reserved_sectors as u32; // The first sector where FAT starts.
+
+        // Calculate the first sector where the data area (file clusters) begins.
         let first_data_sector = first_fat_sector
             + (boot_sector.fat_count as u32 * boot_sector.sectors_per_fat_large as u32);
+
+        // Compute the size of each cluster in bytes.
         let cluster_size = bytes_per_sector * boot_sector.sectors_per_cluster as u32;
+
+        // Calculate the total number of clusters in the data region.
         let total_clusters = (boot_sector.total_sectors_large - first_data_sector)
             / boot_sector.sectors_per_cluster as u32;
 
-        // Initialize FileSystemInfo with computed values
+        // Initialize the FileSystemInfo struct with computed values from the boot sector.
         let fs_info = FileSystemInfo {
-            start_sector: 0,
-            sectors_count: boot_sector.total_sectors_large as u64,
-            bytes_per_sector: boot_sector.bytes_per_sector,
-            root_sectors,
-            sectors_per_cluster: boot_sector.sectors_per_cluster,
-            cluster_size,
-            first_data_sector,
-            first_fat_sector,
-            root_dir_cluster: boot_sector.root_dir_start,
-            total_clusters,
-            root_dir_entries: boot_sector.root_dir_entries,
+            start_sector: 0, // Typically the starting sector of the partition.
+            sectors_count: boot_sector.total_sectors_large as u64, // Total number of sectors in the volume.
+            bytes_per_sector: boot_sector.bytes_per_sector,        // Bytes per sector.
+            root_sectors, // Number of sectors for the root directory.
+            sectors_per_cluster: boot_sector.sectors_per_cluster, // Sectors per cluster.
+            cluster_size, // Size of a cluster in bytes.
+            first_data_sector, // The first sector number of the data area.
+            first_fat_sector, // The first sector number of the FAT area.
+            root_dir_cluster: boot_sector.root_dir_start, // Cluster number where the root directory starts.
+            total_clusters,                               // Total number of clusters.
+            root_dir_entries: boot_sector.root_dir_entries, // Number of root directory entries (FAT12/16).
         };
 
         FatDriver {
@@ -80,71 +115,161 @@ impl FatDriver {
         }
     }
 
+    /// Retrieves all directory entries within a given cluster chain in the FAT file system.
+    ///
+    /// This function navigates through a chain of clusters starting from the specified cluster,
+    /// reading directory entries from each cluster and collecting them into a vector of `VfsDirectoryEntry`.
+    ///
+    /// # Safety
+    ///
+    /// This function is marked as `unsafe` because it directly interacts with low-level disk sectors
+    /// and relies on the validity of cluster and sector calculations, which can potentially cause
+    /// undefined behavior if used incorrectly.
+    ///
+    /// # Arguments
+    ///
+    /// * `cluster` - The starting cluster of the directory whose entries are to be read.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `VfsDirectoryEntry` containing all the entries found in the directory across
+    /// all clusters in the cluster chain.
     pub unsafe fn get_dir_entries(&self, cluster: u32) -> Vec<VfsDirectoryEntry> {
-        let mut entries = Vec::new();
-        let mut current_cluster = cluster;
+        let mut entries = Vec::new(); // Initialize an empty vector to store directory entries.
+        let mut current_cluster = cluster; // Start with the specified cluster.
 
+        // Loop to read all clusters in the cluster chain.
         while self.is_valid_cluster(current_cluster) {
+            // Determine the sector number corresponding to the current cluster.
             let sector = self.get_sector(current_cluster);
+
+            // Read all directory entries from the current cluster sector.
             let cluster_entries = self.read_cluster_entries(sector);
 
+            // Add the entries read from the current cluster to the vector.
             entries.extend(cluster_entries);
 
+            // Get the next cluster in the chain using the FAT.
             current_cluster = self.get_next_cluster(current_cluster);
         }
 
+        // Return the collected directory entries.
         entries
     }
 
+    /// Retrieves a directory entry corresponding to a given path in the FAT file system.
+    ///
+    /// This function navigates through the directory structure of the FAT file system,
+    /// starting from the root directory and moving through subdirectories to locate
+    /// the specified file or directory. It returns the corresponding `VfsDirectoryEntry`
+    /// if found, or `None` if the entry does not exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A string slice representing the path to the directory or file, e.g., "/folder/file.txt".
+    ///
+    /// # Returns
+    ///
+    /// An `Option<VfsDirectoryEntry>` containing the directory entry if found,
+    /// or `None` if the entry does not exist.
     pub fn get_dir_entry(&self, path: &str) -> Option<VfsDirectoryEntry> {
+        // Split the path into components by '/' and filter out any empty components.
         let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-        // If the path is "/", search the root directory
+        // If the path is the root "/", search the root directory directly.
         if path_parts.is_empty() {
             return self.search_in_dir(self.fs.root_dir_cluster, "/");
         }
 
+        // Initialize the search starting at the root directory cluster.
         let mut current_cluster = self.fs.root_dir_cluster;
         let mut last_entry = None;
 
+        // Iterate through each part of the path to navigate through directories.
         for (_i, part) in path_parts.iter().enumerate() {
+            // Search for the current part in the current directory cluster.
             let entry = self.search_in_dir(current_cluster, part)?;
+
+            // If the entry is a directory, update the current cluster to continue the search.
             if entry.is_dir() {
                 current_cluster = entry.get_cluster();
-                last_entry = Some(entry);
+                last_entry = Some(entry); // Keep track of the last directory entry found.
             } else {
+                // If the entry is not a directory, return it as the final result.
                 return Some(entry);
             }
         }
 
+        // Return the last directory entry found, or `None` if not found.
         last_entry
     }
 
+    /// Reads the contents of a file starting from a given cluster and writes it into a buffer.
+    ///
+    /// This function navigates through the cluster chain starting from the specified cluster,
+    /// reads the file data from each cluster's sectors, and copies it into the provided buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `cluster` - The starting cluster of the file to read.
+    /// * `buffer` - A mutable raw pointer to a buffer where the file data will be stored.
+    ///
+    /// # Safety
+    ///
+    /// This function is marked as `unsafe` because it dereferences raw pointers to write data
+    /// into the provided buffer. The caller must ensure that the buffer is valid, correctly sized,
+    /// and that the pointer arithmetic does not cause any memory violations.
     pub fn read_file(&self, cluster: u32, buffer: *mut u8) {
-        let mut cluster = cluster;
-        let mut buffer_offset = 0;
+        let mut cluster = cluster; // Initialize the current cluster to the starting cluster.
+        let mut buffer_offset = 0; // Initialize the offset within the buffer where data will be written.
 
+        // Loop through the cluster chain until reaching a cluster marked as the last.
         while cluster < CLUSTER_LAST {
+            // Determine the sector number corresponding to the current cluster.
             let sector = self.get_sector(cluster);
 
+            // Loop through all sectors within the current cluster.
             for i in 0..self.fs.sectors_per_cluster {
+                // Read the sector data from the device into the buffer.
+                // `buffer.add(buffer_offset)` calculates the address in the buffer to write to.
+                // `sector as u64 + i as u64` calculates the actual sector number to read from.
+                // `1` indicates that one sector should be read.
                 self.device.read_sectors(
                     unsafe { buffer.add(buffer_offset) },
                     sector as u64 + i as u64,
                     1,
                 );
+
+                // Update the buffer offset by the number of bytes in a sector.
                 buffer_offset += self.fs.bytes_per_sector as usize;
             }
 
+            // Get the next cluster in the chain from the FAT and continue reading.
             cluster = self.get_next_cluster(cluster);
         }
     }
 
+    /// Creates a new file in the specified directory within the FAT file system.
+    ///
+    /// This function attempts to allocate a new cluster for the file, creates a file entry
+    /// in the parent directory, and optionally initializes the newly allocated cluster to zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_cluster` - The cluster number of the parent directory where the file will be created.
+    /// * `name` - The name of the new file to be created.
+    ///
+    /// # Safety
+    ///
+    /// This function uses `unsafe` blocks to perform operations that involve direct memory manipulation
+    /// and low-level disk operations. The caller must ensure that the provided arguments are valid and
+    /// that the disk operations do not cause unintended side effects.
     pub fn create_file(&self, parent_cluster: u32, name: &str) {
-        // Attempt to allocate a cluster for the new file.
+        // Attempt to allocate a new cluster for the file.
         let new_file_cluster = match unsafe { self.alloc_cluster() } {
-            Some(cluster) => cluster,
+            Some(cluster) => cluster, // Successfully allocated a new cluster.
             None => {
+                // If allocation fails, print an error message and return early.
                 println!("Failed to allocate cluster for new file");
                 return;
             }
@@ -153,121 +278,191 @@ impl FatDriver {
         unsafe {
             // Safely create the file entry in the parent directory.
             self.create_entry(parent_cluster, name, 0, new_file_cluster);
-            // Optionally, clear the newly allocated cluster to zero to initialize it.
+
+            // Clear the newly allocated cluster to zero to initialize it.
+            // This ensures that the file's data area starts empty.
             self.clear_cluster(new_file_cluster);
-        };
+        }
     }
 
+    /// Writes data to a file starting from the specified directory entry in the FAT file system.
+    ///
+    /// This function writes the contents of the provided buffer into the file represented by the given
+    /// directory entry. It manages the allocation of clusters, updates the File Allocation Table (FAT),
+    /// and ensures that the file data is written correctly to the disk.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - A mutable reference to a `VfsDirectoryEntry` representing the file to write to.
+    /// * `buffer` - A raw pointer to the data buffer that contains the data to write to the file.
+    /// * `size` - The size of the data to be written, in bytes.
+    ///
+    /// # Safety
+    ///
+    /// This function uses `unsafe` blocks for direct memory manipulation and low-level disk operations.
+    /// The caller must ensure that the buffer is valid and correctly sized, and that the disk operations
+    /// do not cause unintended side effects.
     pub fn write_file(&self, entry: &mut VfsDirectoryEntry, buffer: *const u8, size: usize) {
+        // Calculate the number of clusters needed to store the data.
         let clusters_needed = (size as u32 + self.fs.cluster_size - 1) / self.fs.cluster_size;
-        let mut written_bytes = 0;
-        let mut current_cluster = entry.get_cluster();
-        let mut last_cluster = current_cluster;
+        let mut written_bytes = 0; // Track the number of bytes written to the file.
+        let mut current_cluster = entry.get_cluster(); // Get the starting cluster of the file.
+        let mut last_cluster = current_cluster; // Track the last cluster used for writing.
 
+        // Iterate over the number of clusters needed to write the entire data.
         for _ in 0..clusters_needed {
+            // Determine the sector number corresponding to the current cluster.
             let sector = self.get_sector(current_cluster);
 
+            // Iterate through all sectors within the current cluster.
             for sector_offset in 0..self.fs.sectors_per_cluster {
-                let bytes_left = size - written_bytes;
-                let bytes_to_write = bytes_left.min(self.fs.bytes_per_sector as usize);
+                let bytes_left = size - written_bytes; // Calculate remaining bytes to be written.
+                let bytes_to_write = bytes_left.min(self.fs.bytes_per_sector as usize); // Determine how many bytes to write in this iteration.
 
+                // Allocate a DMA buffer for the sector write operation.
                 let write_buffer =
                     memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
+                // Perform the actual write operation to the sector.
                 self.write_to_sector(
-                    buffer,
-                    write_buffer,
-                    sector,
-                    sector_offset,
-                    written_bytes,
-                    bytes_to_write,
+                    buffer,         // Original data buffer.
+                    write_buffer,   // DMA buffer to use for writing.
+                    sector,         // Current sector to write to.
+                    sector_offset,  // Offset within the cluster.
+                    written_bytes,  // Offset within the buffer.
+                    bytes_to_write, // Number of bytes to write in this operation.
                 );
 
+                // Update the count of written bytes.
                 written_bytes += bytes_to_write;
+
+                // Break the loop if all data has been written.
                 if written_bytes >= size {
                     break;
                 }
             }
 
-            // Allocate new cluster if needed and update FAT
+            // Check if more clusters are needed to continue writing.
             if written_bytes < size {
+                // Get the next cluster in the chain from the FAT.
                 let next_cluster = self.get_next_cluster(current_cluster);
+
                 if next_cluster == 0x0FFFFFFF {
+                    // If no next cluster is allocated, allocate a new one and update the FAT.
                     current_cluster = unsafe { self.next_cluster(current_cluster).unwrap() };
                 } else {
+                    // Use the existing next cluster.
                     current_cluster = next_cluster;
                 }
+
+                // Update the last cluster pointer to the current cluster.
                 last_cluster = current_cluster;
             }
         }
 
-        // Mark the end of the cluster chain in the FAT
+        // Mark the end of the cluster chain in the FAT to indicate the end of the file.
         unsafe {
             self.set_next_cluster(last_cluster, 0x0FFFFFFF);
         }
 
-        // Update the directory entry with the new file size and modification time
+        // Update the directory entry to reflect the new file size and modification time.
         self.update_entry(&entry, size);
     }
 
+    /// Creates a new directory in the specified parent directory within the FAT file system.
+    ///
+    /// This function allocates a new cluster for the directory, creates the necessary directory entries
+    /// (including the "." and ".." entries), and writes them to disk. It also ensures that the parent
+    /// directory is updated accordingly.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_cluster` - The cluster number of the parent directory where the new directory will be created.
+    /// * `name` - The name of the new directory to be created.
+    ///
+    /// # Safety
+    ///
+    /// This function is marked as `unsafe` because it directly manipulates raw memory and interacts
+    /// with low-level disk sectors. The caller must ensure that the provided arguments are valid and
+    /// that the operations do not cause unintended side effects or data corruption.
     pub fn create_dir(&self, parent_cluster: u32, name: &str) {
         unsafe {
-            // Allocate a new cluster for the directory
+            // Allocate a new cluster for the new directory.
             let new_dir_cluster = match self.alloc_cluster() {
-                Some(cluster) if cluster != 0 => cluster,
+                Some(cluster) if cluster != 0 => cluster, // Successfully allocated a cluster.
                 _ => {
+                    // If allocation fails, print an error message and return early.
                     println!("Failed to allocate cluster for new directory");
                     return;
                 }
             };
 
-            // Create the directory entry in the parent directory
+            // Create a new directory entry in the parent directory for the new directory.
+            // The entry includes the directory's name, attribute (directory flag), and starting cluster.
             self.create_entry(parent_cluster, name, ATTR_DIRECTORY, new_dir_cluster);
 
-            // Calculate the sector for the new directory
+            // Determine the first sector of the newly allocated directory cluster.
             let sector = self.get_sector(new_dir_cluster);
 
-            // Create the "." entry for the new directory
+            // Create the "." entry, which points to the directory itself.
             let dot_entry = DirectoryEntry::create_dot_entry(new_dir_cluster);
+
+            // Create the ".." entry, which points to the parent directory.
             let dotdot_entry = DirectoryEntry::create_dotdot_entry(parent_cluster);
 
-            // Read the sector where the new directory is located
+            // Allocate a DMA buffer to read and write the directory sector.
             let buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
+
+            // Read the current sector contents where the new directory is located.
             self.device.read_sectors(buffer, sector as u64, 1);
 
-            // Write the "." entry at the beginning of the directory
+            // Write the "." entry at the beginning of the directory.
             core::ptr::write_volatile(buffer as *mut DirectoryEntry, dot_entry);
 
-            // Write the ".." entry just after the "." entry
+            // Write the ".." entry immediately after the "." entry.
             core::ptr::write_volatile(
                 buffer.add(size_of::<DirectoryEntry>() as usize) as *mut DirectoryEntry,
                 dotdot_entry,
             );
 
-            // Write the buffer back to the disk
+            // Write the modified buffer back to the disk to finalize the new directory creation.
             self.device.write_sectors(buffer, sector as u64, 1);
         }
     }
 
+    /// Deletes a directory entry from the FAT file system by marking it as deleted.
+    ///
+    /// This function marks the specified directory entry as deleted in its respective sector
+    /// on the disk. The actual data is not removed; instead, the entry is marked with a special
+    /// character to indicate that it has been deleted. This operation does not deallocate clusters.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - A reference to a `VfsDirectoryEntry` representing the directory entry to be deleted.
+    ///
+    /// The function calculates the sector and offset of the entry, reads the sector into memory,
+    /// marks the entry as deleted, and writes the modified sector back to the disk.
     pub fn delete_entry(&self, node: &VfsDirectoryEntry) {
+        // Retrieve the sector number and offset within the sector for the directory entry.
         let sector = node.sector;
         let offset = node.offset;
 
-        // Allocate a buffer to read the sector containing the directory entry
+        // Allocate a buffer to read the sector containing the directory entry.
         let read_buffer = memory::allocate_dma_buffer(self.fs.bytes_per_sector as usize) as *mut u8;
 
-        // Read the sector into the buffer
+        // Read the sector containing the directory entry into the buffer.
         self.device.read_sectors(read_buffer, sector as u64, 1);
 
-        // Get a pointer to the directory entry within the buffer
+        // Calculate the pointer to the specific directory entry within the buffer.
         let entry_ptr = unsafe { read_buffer.add(offset as usize) as *mut DirectoryEntry };
 
-        // Mark the directory entry as deleted
+        // Mark the directory entry as deleted by setting its first character to ENTRY_DELETED.
+        // ENTRY_DELETED is typically 0xE5 in the FAT file system, indicating the entry is deleted.
         unsafe {
             (*entry_ptr).name[0] = ENTRY_DELETED;
         }
 
-        // Write the modified sector back to the device
+        // Write the modified buffer back to the disk to update the directory entry.
         self.device.write_sectors(read_buffer, sector as u64, 1);
     }
 
