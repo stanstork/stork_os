@@ -1,5 +1,5 @@
 use super::{
-    fat_driver::{ATTR_DIRECTORY, ENTRY_END, ENTRY_FREE},
+    driver::{ATTR_DIRECTORY, ENTRY_END, ENTRY_FREE},
     get_current_fat_time_date,
 };
 

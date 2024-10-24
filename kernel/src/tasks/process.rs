@@ -3,9 +3,9 @@ use super::{
     id::{IdAllocator, Pid},
     thread::Priority,
 };
+use crate::arch::x86_64::gdt::PrivilegeLevel;
 use crate::{
-    gdt::PrivilegeLevel,
-    memory::paging::{page_table_manager::PageTableManager, table::PageTable, ROOT_PAGE_TABLE},
+    memory::paging::{manager::PageTableManager, table::PageTable, ROOT_PAGE_TABLE},
     println,
 };
 use alloc::rc::Rc;

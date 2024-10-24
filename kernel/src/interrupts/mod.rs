@@ -1,9 +1,9 @@
-use crate::{apic::APIC, cpu::io::pic_end_master};
 use core::arch::asm;
 
+use crate::{apic::APIC, io::pic_end_master};
+
+pub(crate) mod handlers;
 pub(crate) mod idt;
-pub(crate) mod isr;
-pub(crate) mod timer;
 
 pub fn disable_interrupts() {
     unsafe {

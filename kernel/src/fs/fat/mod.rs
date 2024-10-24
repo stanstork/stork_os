@@ -1,9 +1,9 @@
-use crate::cpu::rtc::RTC;
+use crate::devices::timers::rtc::RTC;
 
-pub(crate) mod boot_sector;
+pub(crate) mod boot;
 pub(crate) mod dir_entry;
-pub(crate) mod fat_driver;
-pub(crate) mod long_dir_entry;
+pub(crate) mod driver;
+pub(crate) mod long_entry;
 
 pub fn create_short_filename(name: &str) -> [u8; 11] {
     let mut short_name = [b' '; 11];

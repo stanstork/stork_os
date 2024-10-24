@@ -1,10 +1,10 @@
 use crate::sync::mutex::SpinMutex;
-use ahci::{ahci_device::AhciDevice, init_ahci_controller};
+use ahci::{device::AhciDevice, init_ahci_controller};
 use alloc::string::String;
-use storage_manager::StorageManager;
+use manager::StorageManager;
 
 pub mod ahci;
-pub mod storage_manager;
+pub mod manager;
 
 /// A global mutable instance of `StorageManager` wrapped in a `SpinMutex`.
 /// This static variable is used to manage access to the `StorageManager` across multiple threads.

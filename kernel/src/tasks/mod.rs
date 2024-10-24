@@ -1,7 +1,7 @@
 use crate::{
     memory::{
         addr::VirtAddr,
-        paging::{page_table_manager::PageTableManager, table::PageTable, ROOT_PAGE_TABLE},
+        paging::{manager::PageTableManager, table::PageTable, ROOT_PAGE_TABLE},
     },
     registers::cr3::Cr3,
     ALLOCATOR, INITIAL_RSP,

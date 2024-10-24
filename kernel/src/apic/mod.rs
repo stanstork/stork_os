@@ -1,12 +1,12 @@
 use crate::{
-    acpi::{madt::Madt, rsdp::RSDP_MANAGER},
+    acpi::tables::{madt::Madt, rsdp::RSDP_MANAGER},
     sync::mutex::SpinMutex,
 };
-use ioapic::IoApic;
-use lapic::Lapic;
+use io::IoApic;
+use local::Lapic;
 
-mod ioapic;
-mod lapic;
+mod io;
+mod local;
 
 /// Represents the APIC system, including both the Local APIC (LAPIC) and I/O APIC.
 pub(crate) struct Apic {

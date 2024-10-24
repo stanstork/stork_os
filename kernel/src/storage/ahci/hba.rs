@@ -1,9 +1,10 @@
-use super::fis::FisRegisterHostToDevice;
 use crate::{
-    cpu::io::sleep_for,
+    io::sleep_for,
     memory, println,
-    storage::ahci::ahci_controller::{AHCI_ENABLE, AHCI_ENABLE_TIMEOUT},
+    storage::ahci::controller::{AHCI_ENABLE, AHCI_ENABLE_TIMEOUT},
 };
+
+use super::fis::FisRegisterHostToDevice;
 use bitfield_struct::bitfield;
 use core::mem::size_of;
 

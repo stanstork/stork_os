@@ -3,10 +3,10 @@ use super::{
     process::Process,
 };
 use crate::{
-    gdt::PrivilegeLevel,
+    arch::x86_64::gdt::PrivilegeLevel,
     memory::{
         addr::{PhysAddr, VirtAddr},
-        paging::{page_table_manager::PageTableManager, table::PageTable},
+        paging::{manager::PageTableManager, table::PageTable},
     },
     print, println,
     registers::cr3::Cr3,

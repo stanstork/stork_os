@@ -1,21 +1,17 @@
 use self::{
     addr::{PhysAddr, VirtAddr},
     memory_descriptor::EFIMemoryDescriptor,
-    physical_page_allocator::PhysicalPageAllocator,
-    region::Region,
 };
-use crate::{println, structures::BootInfo, ALLOCATOR};
+use crate::{boot::BootInfo, println, ALLOCATOR};
 use alloc::boxed::Box;
-use paging::{page_table_manager::PageTableManager, table::PageTable};
+use allocation::{physical::PhysicalPageAllocator, region::Region};
+use paging::{manager::PageTableManager, table::PageTable};
 
 pub(crate) mod addr;
-pub(crate) mod bitmap;
-pub(crate) mod global_allocator;
+pub(crate) mod allocation;
 pub(crate) mod heap;
 pub(crate) mod memory_descriptor;
 pub(crate) mod paging;
-pub(crate) mod physical_page_allocator;
-pub(crate) mod region;
 
 pub const PAGE_SIZE: usize = 4096; // 4 KB
 pub const KERNEL_PHYS_START: PhysAddr = PhysAddr(0x100000); // 1 MB
@@ -41,7 +37,7 @@ pub static mut PAGE_FRAME_ALLOCATOR: Option<PhysicalPageAllocator> = None;
 ///
 /// * `boot_info` - A reference to the boot information provided by the bootloader. This includes
 ///   details about the memory map, kernel start and end addresses, and other boot parameters.
-pub unsafe fn init(boot_info: &'static crate::structures::BootInfo) {
+pub unsafe fn init(boot_info: &'static crate::boot::BootInfo) {
     let mut page_frame_allocator = PhysicalPageAllocator::new();
 
     // Read and process the EFI memory map to understand the available and used memory regions.

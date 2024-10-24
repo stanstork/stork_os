@@ -6,17 +6,19 @@
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 #![feature(str_from_raw_parts)] // enable str::from_raw_parts
 
-use acpi::rsdp;
+use crate::acpi::tables::rsdp;
 use alloc::string::String;
 use apic::APIC;
+use arch::x86_64::{gdt, tss};
+use boot::BootInfo;
 use core::{arch::asm, panic::PanicInfo};
-use drivers::screen::display::{self, DISPLAY};
+use devices::video::display::{self, DISPLAY};
 use interrupts::{
-    isr::{self, KEYBOARD_IRQ},
+    handlers::isr::{self, KEYBOARD_IRQ},
     no_interrupts,
 };
-use memory::global_allocator::GlobalAllocator;
-use structures::BootInfo;
+use memory::allocation::global::GlobalAllocator;
+
 use tasks::{
     process::Process,
     scheduler::{Scheduler, SCHEDULER},
@@ -29,20 +31,18 @@ extern crate alloc;
 mod acpi;
 mod apic;
 mod arch;
-mod cpu;
+mod boot;
 mod data_types;
-mod drivers;
+mod devices;
 mod fs;
-mod gdt;
 mod interrupts;
+mod io;
 mod memory;
 mod pci;
 mod registers;
 mod storage;
-mod structures;
 mod sync;
 mod tasks;
-mod tss;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
 // When this attribute is used, Rust will use the specified allocator for all dynamic memory allocations throughout the program.

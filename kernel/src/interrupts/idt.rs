@@ -1,11 +1,12 @@
-use crate::{
-    cpu::io::{PortIO, PIC_COMMAND_MASTER, PIC_DATA_MASTER},
-    structures::DescriptorTablePointer,
-};
 use core::{
     arch::asm,
     mem::size_of,
     ops::{Index, IndexMut},
+};
+
+use crate::{
+    boot::DescriptorTablePointer,
+    io::{PortIO, PIC_DATA_MASTER},
 };
 
 /// An entry in the Interrupt Descriptor Table (IDT).

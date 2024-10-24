@@ -1,13 +1,9 @@
-use crate::{
-    pci::device_manager::{self},
-    println,
-    sync::mutex::SpinMutex,
-};
-use ahci_controller::AhciController;
+use crate::{pci::device::device::search_device, println, sync::mutex::SpinMutex};
+use controller::AhciController;
 use sata_ident::SataIdentity;
 
-pub mod ahci_controller;
-pub mod ahci_device;
+pub mod controller;
+pub mod device;
 pub mod fis;
 pub mod hba;
 pub mod sata_ident;
@@ -25,7 +21,7 @@ pub static mut AHCI_CONTROLLER: SpinMutex<Option<AhciController>> = SpinMutex::n
 ///
 /// If a device is found, it initializes the `AhciController` and stores it in a global static variable.
 pub fn init_ahci_controller() {
-    let device = device_manager::search_device(MASS_STORAGE, PCI_SUBCLASS_AHCI);
+    let device = search_device(MASS_STORAGE, PCI_SUBCLASS_AHCI);
     if let Some(device) = device {
         let controller = unsafe { AhciController::init(device) };
         unsafe { AHCI_CONTROLLER = SpinMutex::new(Some(controller)) };

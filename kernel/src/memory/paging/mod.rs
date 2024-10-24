@@ -1,17 +1,18 @@
-use super::physical_page_allocator::PhysicalPageAllocator;
 use crate::{
+    boot::BootInfo,
     memory::{
-        addr::{PhysAddr, ToPhysAddr, VirtAddr},
+        addr::{PhysAddr, VirtAddr},
         get_memory_size,
-        paging::{page_table_manager::PageTableManager, table::PageTable},
+        paging::{manager::PageTableManager, table::PageTable},
         PAGE_SIZE,
     },
     println,
     registers::cr3::Cr3,
-    structures::BootInfo,
 };
 
-pub(crate) mod page_table_manager;
+use super::allocation::physical::PhysicalPageAllocator;
+
+pub(crate) mod manager;
 pub(crate) mod table;
 
 pub static mut PAGE_TABLE_MANAGER: Option<PageTableManager> = None;

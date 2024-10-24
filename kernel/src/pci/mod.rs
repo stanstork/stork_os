@@ -1,15 +1,16 @@
+use device::{
+    class::{get_class_code_info, PciClassCodeInfo},
+    device::add_device,
+    pci_device::PciDevice,
+    vendor::get_vendor_name,
+};
+
 use crate::{
-    cpu::io::{inl, outl},
+    io::{inl, outl},
     println,
 };
-use device_manager::add_device;
-use pci_class::PciClassCodeInfo;
-use pci_device::PciDevice;
 
-pub mod device_manager;
-pub mod pci_class;
-pub mod pci_device;
-pub mod pci_vendor;
+pub mod device;
 
 // Constants for accessing the PCI configuration space
 
@@ -117,9 +118,9 @@ impl PCI {
             Self::get_device_class_info(bus, device, function);
 
         // Retrieve the human-readable vendor name using the vendor ID.
-        let vendor_name = pci_vendor::get_vendor_name(vendor_id);
+        let vendor_name = get_vendor_name(vendor_id);
         // Retrieve human-readable information about the device's class type.
-        let class_info = pci_class::get_class_code_info(class_code, sub_class_code, prog_if);
+        let class_info = get_class_code_info(class_code, sub_class_code, prog_if);
 
         // Print the device information such as vendor name, device ID, and class information.
         Self::print_device_info(vendor_name.unwrap(), device_id, &class_info.unwrap());
