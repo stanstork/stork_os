@@ -9,6 +9,7 @@ use crate::{
 use core::{arch::asm, ptr::copy_nonoverlapping};
 use scheduler::SCHEDULER;
 
+pub(super) mod elf;
 pub(crate) mod id;
 pub(crate) mod process;
 pub(crate) mod scheduler;

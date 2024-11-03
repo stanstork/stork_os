@@ -223,6 +223,20 @@ impl VirtualFileSystem {
         self.get_entry_for_path(path).is_some()
     }
 
+    pub fn size(&self, path: &str) -> Option<usize> {
+        if let Some((_, entry)) = self.get_entry_for_path(path) {
+            if entry.is_dir() {
+                println!("Error: {} is a directory", path);
+                return None;
+            }
+
+            Some(entry.entry.size as usize)
+        } else {
+            println!("File not found: {}", path);
+            None
+        }
+    }
+
     fn create_entry(&self, path: &str, entry_type: EntryType) {
         // Check if the entry already exists at the specified path.
         if self.exists(path) {
@@ -376,3 +390,10 @@ impl VirtualFileSystem {
 
 /// A global, mutable instance of the `VirtualFileSystem` protected by a `SpinMutex`.
 pub static mut FS: SpinMutex<VirtualFileSystem> = SpinMutex::new(VirtualFileSystem::new());
+
+pub fn init() {
+    // Initialize the virtual file system.
+    unsafe {
+        FS.lock().mount("AHCI0", "/", "FAT32");
+    }
+}

@@ -13,6 +13,7 @@ use arch::x86_64::{gdt, tss};
 use boot::BootInfo;
 use core::{arch::asm, panic::PanicInfo};
 use devices::video::display::{self, DISPLAY};
+use fs::vfs::FS;
 use interrupts::{
     handlers::isr::{self, KEYBOARD_IRQ},
     no_interrupts,
@@ -20,6 +21,7 @@ use interrupts::{
 use memory::allocation::global::GlobalAllocator;
 
 use tasks::{
+    elf,
     process::Process,
     scheduler::{Scheduler, SCHEDULER},
     thread::Priority,
@@ -80,9 +82,12 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
         pci::PCI::scan_pci_bus();
         storage::init();
+        fs::vfs::init();
 
-        test_fs();
+        // test_fs();
         // test_proc();
+
+        elf::ElfLoader::load_file("/simple_app.elf");
     }
 
     loop {}
@@ -172,11 +177,9 @@ extern "C" fn test_thread2() {
 }
 
 fn test_fs() {
-    let mut vfs = fs::vfs::VirtualFileSystem::new();
-    vfs.mount("AHCI0", "/", "FAT32");
-
     println!("Listing directory /");
 
+    let vfs = unsafe { FS.lock() };
     let list_directory = vfs.read_dir("/");
     if let Some(entries) = list_directory {
         for entry in entries {
