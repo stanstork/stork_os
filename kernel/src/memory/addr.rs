@@ -1,4 +1,7 @@
-use core::ops::{Add, AddAssign};
+use core::{
+    fmt::{Formatter, LowerHex},
+    ops::{Add, AddAssign},
+};
 
 use super::HEAP_START;
 
@@ -51,6 +54,10 @@ impl VirtAddr {
         self.0 as *mut T
     }
 
+    pub fn as_ptr<T>(self) -> *const T {
+        self.0 as *const T
+    }
+
     #[inline]
     pub fn from_ptr<T: ?Sized>(ptr: *const T) -> Self {
         Self(ptr as *const () as usize)
@@ -92,5 +99,37 @@ impl Add<usize> for VirtAddr {
 impl AddAssign<usize> for VirtAddr {
     fn add_assign(&mut self, rhs: usize) {
         self.0 += rhs;
+    }
+}
+
+impl Add<u64> for VirtAddr {
+    type Output = VirtAddr;
+
+    fn add(self, rhs: u64) -> VirtAddr {
+        VirtAddr(self.0 + rhs as usize)
+    }
+}
+
+impl From<*mut u8> for VirtAddr {
+    fn from(ptr: *mut u8) -> Self {
+        VirtAddr(ptr as usize)
+    }
+}
+
+impl From<u64> for VirtAddr {
+    fn from(addr: u64) -> Self {
+        VirtAddr(addr as usize)
+    }
+}
+
+impl From<usize> for VirtAddr {
+    fn from(addr: usize) -> Self {
+        VirtAddr(addr)
+    }
+}
+
+impl LowerHex for VirtAddr {
+    fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
+        write!(f, "{:#x}", self.0)
     }
 }

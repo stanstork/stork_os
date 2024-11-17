@@ -112,6 +112,19 @@ impl PageTableManager {
         );
     }
 
+    pub fn ser_user_access(page_table: *mut PageTable, virt_addr: VirtAddr) {
+        let mut current_table_ptr = PageTablePtr::new(page_table, TableLevel::PML4);
+
+        for _ in (1..4).rev() {
+            let index = current_table_ptr.level.index(virt_addr);
+            let entry = unsafe { &mut (*current_table_ptr.ptr)[index] };
+
+            entry.set_flags(entry.flags() | PageEntryFlags::USER_ACCESSIBLE);
+
+            current_table_ptr = unsafe { current_table_ptr.next(virt_addr) };
+        }
+    }
+
     /// Clones the PML4 table, including all its lower-level tables.
     ///
     /// # Arguments
@@ -172,7 +185,7 @@ impl PageTableManager {
     pub unsafe fn map_io(&mut self, virt: VirtAddr, phys: PhysAddr) {
         let page_table_ptr = self.alloc_zeroed_page().0 as *mut PageTable;
         let mut frame_alloc = || page_table_ptr;
-        self.map_memory(virt, phys, &mut frame_alloc, false);
+        self.map_memory(virt, phys, &mut frame_alloc, true);
     }
 
     /// Allocates a zeroed page.
@@ -194,6 +207,12 @@ impl PageTableManager {
 
         // Convert the virtual address to a physical address
         self.phys_addr(VirtAddr(virtual_address as usize))
+    }
+
+    pub unsafe fn alloc_page(&self) -> VirtAddr {
+        let virtual_address = ALLOCATOR.alloc_page();
+        virtual_address.write_bytes(0, PAGE_SIZE);
+        virtual_address.into()
     }
 
     /// Clones the PDPT (Page Directory Pointer Table), including all its lower-level tables.

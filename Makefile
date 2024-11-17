@@ -4,7 +4,7 @@ BOOTLOADER_DIR	  := boot/uefi
 
 KERNEL_BINARY     := ${BUILD_DIR}/kernel.elf
 BOOTLOADER_BINARY := ${BUILD_DIR}/bootx64.efi
-SIMPLE_APP_BINARY := ${BUILD_DIR}/simple_app.elf
+SIMPLE_APP_BINARY := ${BUILD_DIR}/simple_app
 
 DISK_IMG          := ${BUILD_DIR}/kernel.img
 DISK_IMG_SIZE     := 2880
@@ -54,7 +54,7 @@ ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${SIMPLE_APP_BIN
 	mcopy -i ${DISK_IMG} assets/fonts/zap-light16.psf ::/zap-light16.psf
 	mcopy -i ${DISK_IMG} ${KERNEL_BINARY} ::/kernel.elf
 	mcopy -i ${DISK_IMG} assets/fsdata/test.txt ::/test.txt
-	mcopy -i ${DISK_IMG} ${SIMPLE_APP_BINARY} ::/simple_app.elf
+	mcopy -i ${DISK_IMG} ${SIMPLE_APP_BINARY} ::/simple_app
 
 ${BOOTLOADER_BINARY}:
 	make -C ${BOOTLOADER_DIR}

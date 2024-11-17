@@ -1,4 +1,5 @@
 use super::{
+    elf::ElfLoader,
     id::{IdAllocator, Tid},
     process::Process,
 };
@@ -34,7 +35,7 @@ pub struct State {
     rdx: u64,
     rcx: u64,
     rbx: u64,
-    rax: u64,
+    pub(crate) rax: u64,
     rip: u64,    // Instruction pointer
     cs: u64,     // Code segment
     rflags: u64, // RFLAGS register
@@ -92,7 +93,7 @@ impl Thread {
     /// * `process` - Reference to the process this thread belongs to.
     /// * `privilege_level` - Privilege level of the thread (Kernel/User).
     /// * `priority` - Priority of the thread.
-    pub(super) fn new(
+    pub fn new(
         entry_point: *const usize,
         process: Rc<RefCell<Process>>,
         privilege_level: PrivilegeLevel,
@@ -145,6 +146,22 @@ impl Thread {
         )
     }
 
+    pub fn new_user2(process: Rc<RefCell<Process>>, priority: Priority, elf_file: &str) -> Self {
+        let page_table = process.borrow().page_table;
+        let entry = ElfLoader::load_elf(elf_file, page_table);
+
+        println!("Entry point: {:#x}", entry.unwrap());
+
+        Self::new(
+            entry.unwrap().0 as *const usize,
+            process,
+            PrivilegeLevel::User,
+            priority,
+        )
+
+        // todo!()
+    }
+
     /// Executes the thread by setting up the page table and stack pointer, and then starting the thread.
     pub fn run(&self) {
         let page_table = self.process.borrow().page_table;
@@ -170,7 +187,7 @@ impl Thread {
     /// # Returns
     ///
     /// The virtual address where the code is mapped.
-    unsafe fn map_user_memory(
+    pub unsafe fn map_user_memory(
         page_table: *mut PageTable,
         address: *const usize,
         size: usize,
