@@ -23,7 +23,6 @@ use interrupts::{
     no_interrupts,
 };
 use memory::allocation::global::GlobalAllocator;
-
 use tasks::{
     process::Process,
     scheduler::{Scheduler, SCHEDULER},
@@ -46,6 +45,7 @@ mod pci;
 mod registers;
 mod storage;
 mod sync;
+mod sys;
 mod tasks;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
@@ -87,35 +87,18 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         fs::vfs::init();
 
         // test_fs();
-        // // test_proc();
-
-        // tasks::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
-        let alloc_page = ALLOCATOR.alloc_page();
-        println!("Allocated page: {:#x}", alloc_page as u64);
+        // test_proc();
 
         test_elf_execution();
-        // test_proc();
     }
 
     loop {}
 }
 
 pub fn test_elf_execution() {
-    let user_proc = Process::create_user_process(Priority::High);
-    let user_thread = Thread::new_user2(user_proc, Priority::High, "/simple_app");
-    user_thread.run();
-}
-
-fn get_return_value() -> i32 {
-    // Obtain a reference to the currently running thread
-    let current_thread = unsafe { SCHEDULER.as_ref().unwrap().get_current_thread() };
-    let thread_lock = current_thread.lock();
-
-    // Assuming the `State` struct is located at the top of the thread's stack
-    let state = unsafe { &*(thread_lock.stack_pointer as *const State) };
-
-    // Return the value of the `rax` register as an i32
-    state.rax as i32
+    let process = Process::create_user_process(Priority::Medium, "/demo_app");
+    let thread = process.borrow().threads[0].borrow().clone();
+    thread.run();
 }
 
 pub fn print_buffer_text(buffer: *mut u8, length: usize) {

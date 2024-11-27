@@ -4,7 +4,7 @@ BOOTLOADER_DIR	  := boot/uefi
 
 KERNEL_BINARY     := ${BUILD_DIR}/kernel.elf
 BOOTLOADER_BINARY := ${BUILD_DIR}/bootx64.efi
-SIMPLE_APP_BINARY := ${BUILD_DIR}/simple_app
+DEMO_APP_BINARY   := ${BUILD_DIR}/demo_app
 
 DISK_IMG          := ${BUILD_DIR}/kernel.img
 DISK_IMG_SIZE     := 2880
@@ -43,7 +43,7 @@ kernel: ${KERNEL_BINARY}
 
 simple_app: ${SIMPLE_APP_BINARY}
 
-${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${SIMPLE_APP_BINARY}
+${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${DEMO_APP_BINARY}
 	# Create UEFI boot disk image in DOS format.
 	dd if=/dev/zero of=${DISK_IMG} bs=1M count=512
 	mformat -i ${DISK_IMG} -F ::
@@ -54,7 +54,7 @@ ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${SIMPLE_APP_BIN
 	mcopy -i ${DISK_IMG} assets/fonts/zap-light16.psf ::/zap-light16.psf
 	mcopy -i ${DISK_IMG} ${KERNEL_BINARY} ::/kernel.elf
 	mcopy -i ${DISK_IMG} assets/fsdata/test.txt ::/test.txt
-	mcopy -i ${DISK_IMG} ${SIMPLE_APP_BINARY} ::/simple_app
+	mcopy -i ${DISK_IMG} ${DEMO_APP_BINARY} ::/demo_app
 
 ${BOOTLOADER_BINARY}:
 	make -C ${BOOTLOADER_DIR}
@@ -65,8 +65,8 @@ ${BUILD_DIR}:
 ${KERNEL_BINARY}:
 	make -C ${KERNEL_DIR}
 
-${SIMPLE_APP_BINARY}:
-	make -C apps/simple_app
+${DEMO_APP_BINARY}:
+	make -C apps/demo_app
 
 clean:
 	rm -rf ${BUILD_DIR}/*

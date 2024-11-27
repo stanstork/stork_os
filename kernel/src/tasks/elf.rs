@@ -1,5 +1,3 @@
-use core::fmt::Debug;
-
 use crate::{
     fs::vfs::FS,
     memory::{
@@ -10,6 +8,7 @@ use crate::{
     },
     print, println,
 };
+use core::fmt::Debug;
 
 const ELF_NIDENT: usize = 16; // Size of e_ident array in Elf64Ehdr
 
@@ -124,7 +123,7 @@ pub struct ElfLoader {}
 impl ElfLoader {
     /// Loads an ELF file into memory and maps its segments to the provided page table.
     /// Returns the virtual address of the entry point if successful.
-    pub fn load_elf(elf_file: &str, page_table: *mut PageTable) -> Option<VirtAddr> {
+    pub fn load_elf(elf_file: &str, page_table: *mut PageTable) -> Option<(VirtAddr, usize)> {
         // Access the Virtual File System (VFS)
         let vfs = unsafe { FS.lock() };
         let size = vfs.size(elf_file).expect("Failed to get file size");
@@ -195,7 +194,7 @@ impl ElfLoader {
         }
 
         // Return entry point address
-        Some(elf_header.e_entry.into())
+        Some((elf_header.e_entry.into(), size))
     }
 
     fn validate_elf_header(elf_header: &Elf64Ehdr) -> bool {
@@ -204,23 +203,7 @@ impl ElfLoader {
     }
 }
 
-fn dump_elf_header(header: &Elf64Ehdr) {
-    println!("ELF Header:");
-    println!("  e_ident: {:x?}", header.e_ident);
-    println!(
-        "  e_type: {}, e_machine: {:#x}, e_version: {}",
-        header.e_type, header.e_machine, header.e_version
-    );
-    println!(
-        "  e_entry: {:#x}, e_phoff: {}, e_shoff: {}",
-        header.e_entry, header.e_phoff, header.e_shoff
-    );
-    println!(
-        "  e_flags: {:#x}, e_ehsize: {}, e_phentsize: {}, e_phnum: {}",
-        header.e_flags, header.e_ehsize, header.e_phentsize, header.e_phnum
-    );
-}
-
+// Dump the memory contents starting from the specified address
 fn dump_memory(address: usize, size: usize) {
     let mut address = address;
     let mut i = 0;
