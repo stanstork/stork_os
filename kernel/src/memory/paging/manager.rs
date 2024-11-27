@@ -172,7 +172,7 @@ impl PageTableManager {
     pub unsafe fn map_io(&mut self, virt: VirtAddr, phys: PhysAddr) {
         let page_table_ptr = self.alloc_zeroed_page().0 as *mut PageTable;
         let mut frame_alloc = || page_table_ptr;
-        self.map_memory(virt, phys, &mut frame_alloc, false);
+        self.map_memory(virt, phys, &mut frame_alloc, true);
     }
 
     /// Allocates a zeroed page.

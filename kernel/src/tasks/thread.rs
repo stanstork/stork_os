@@ -1,4 +1,5 @@
 use super::{
+    elf::ElfLoader,
     id::{IdAllocator, Tid},
     process::Process,
 };
@@ -14,32 +15,59 @@ use crate::{
     ALLOCATOR,
 };
 use alloc::rc::Rc;
-use core::{cell::RefCell, mem::size_of, ptr::copy_nonoverlapping};
+use core::{cell::RefCell, fmt::Debug, mem::size_of, ptr::copy_nonoverlapping};
 
 /// Represents the CPU state for a thread, to be saved and restored during context switches.
 #[derive(Default)]
 #[repr(C)]
 pub struct State {
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rbp: u64,
-    rdi: u64,
-    rsi: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
-    rip: u64,    // Instruction pointer
-    cs: u64,     // Code segment
-    rflags: u64, // RFLAGS register
-    rsp: u64,    // Stack pointer
-    ss: u64,     // Stack segment
+    pub(crate) r15: u64,
+    pub(crate) r14: u64,
+    pub(crate) r13: u64,
+    pub(crate) r12: u64,
+    pub(crate) r11: u64,
+    pub(crate) r10: u64,
+    pub(crate) r9: u64,
+    pub(crate) r8: u64,
+    pub(crate) rbp: u64,
+    pub(crate) rdi: u64,
+    pub(crate) rsi: u64,
+    pub(crate) rdx: u64,
+    pub(crate) rcx: u64,
+    pub(crate) rbx: u64,
+    pub(crate) rax: u64,
+    pub(crate) rip: u64,    // Instruction pointer
+    pub(crate) cs: u64,     // Code segment
+    pub(crate) rflags: u64, // RFLAGS register
+    pub(crate) rsp: u64,    // Stack pointer
+    pub(crate) ss: u64,     // Stack segment
+}
+
+impl Debug for State {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("State")
+            .field("r15", &self.r15)
+            .field("r14", &self.r14)
+            .field("r13", &self.r13)
+            .field("r12", &self.r12)
+            .field("r11", &self.r11)
+            .field("r10", &self.r10)
+            .field("r9", &self.r9)
+            .field("r8", &self.r8)
+            .field("rbp", &self.rbp)
+            .field("rdi", &self.rdi)
+            .field("rsi", &self.rsi)
+            .field("rdx", &self.rdx)
+            .field("rcx", &self.rcx)
+            .field("rbx", &self.rbx)
+            .field("rax", &self.rax)
+            .field("rip", &self.rip)
+            .field("cs", &self.cs)
+            .field("rflags", &self.rflags)
+            .field("rsp", &self.rsp)
+            .field("ss", &self.ss)
+            .finish()
+    }
 }
 
 /// Enum representing the priority levels of a thread. Lower values indicate higher priority.
@@ -92,7 +120,7 @@ impl Thread {
     /// * `process` - Reference to the process this thread belongs to.
     /// * `privilege_level` - Privilege level of the thread (Kernel/User).
     /// * `priority` - Priority of the thread.
-    pub(super) fn new(
+    pub fn new(
         entry_point: *const usize,
         process: Rc<RefCell<Process>>,
         privilege_level: PrivilegeLevel,
@@ -122,27 +150,15 @@ impl Thread {
     }
 
     /// Creates a new user thread for the given process with the specified priority.
-    ///
-    /// # Arguments
-    ///
-    /// * `process` - Reference to the process this thread belongs to.
-    /// * `priority` - Priority of the thread.
-    pub fn new_user(process: Rc<RefCell<Process>>, priority: Priority) -> Self {
-        // Set the entry point to an infinite loop (halts the CPU when thread finishes)
-        let entry_point = unsafe {
-            let code = INFINITE_LOOP.as_ptr() as *const usize;
-            let size = INFINITE_LOOP.len();
-            Self::map_user_memory(process.borrow().page_table, code, size)
-        };
+    pub fn new_user(process: Rc<RefCell<Process>>, priority: Priority, elf_file: &str) -> Self {
+        let page_table = process.borrow().page_table;
+        let elf = ElfLoader::load_elf(elf_file, page_table);
+        let (entry, size) = elf.expect("Failed to load ELF file");
 
-        // println!("Entry point: {:#x}", entry_point);
+        // Make loaded code accessible to the user process
+        unsafe { Self::map_user_memory(process.borrow().page_table, entry.as_ptr(), size) };
 
-        Self::new(
-            entry_point as *const usize,
-            process,
-            PrivilegeLevel::User,
-            priority,
-        )
+        Self::new(entry.as_ptr(), process, PrivilegeLevel::User, priority)
     }
 
     /// Executes the thread by setting up the page table and stack pointer, and then starting the thread.
@@ -170,7 +186,7 @@ impl Thread {
     /// # Returns
     ///
     /// The virtual address where the code is mapped.
-    unsafe fn map_user_memory(
+    pub unsafe fn map_user_memory(
         page_table: *mut PageTable,
         address: *const usize,
         size: usize,

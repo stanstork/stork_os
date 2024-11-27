@@ -5,25 +5,28 @@
 #![feature(core_intrinsics)] // enable core intrinsics
 #![feature(const_refs_to_cell)] // enable const references to UnsafeCell
 #![feature(str_from_raw_parts)] // enable str::from_raw_parts
+#![feature(ptr_metadata)] // enable pointer metadata
 
 use crate::acpi::tables::rsdp;
 use alloc::string::String;
 use apic::APIC;
-use arch::x86_64::{gdt, tss};
+use arch::x86_64::{
+    gdt::{self},
+    tss,
+};
 use boot::BootInfo;
 use core::{arch::asm, panic::PanicInfo};
 use devices::video::display::{self, DISPLAY};
+use fs::vfs::FS;
 use interrupts::{
     handlers::isr::{self, KEYBOARD_IRQ},
     no_interrupts,
 };
 use memory::allocation::global::GlobalAllocator;
-
 use tasks::{
     process::Process,
     scheduler::{Scheduler, SCHEDULER},
-    thread::Priority,
-    KERNEL_STACK_SIZE, KERNEL_STACK_START,
+    thread::{Priority, State, Thread},
 };
 
 extern crate alloc;
@@ -42,6 +45,7 @@ mod pci;
 mod registers;
 mod storage;
 mod sync;
+mod sys;
 mod tasks;
 
 // The `#[global_allocator]` attribute is used to designate a specific allocator as the global memory allocator for the Rust program.
@@ -71,7 +75,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
             tss::load_tss();
 
             rsdp::init_rsdp(boot_info);
-            // apic::setup_apic();
+            // // apic::setup_apic();
             println!("APIC initialized");
         });
 
@@ -80,12 +84,21 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
         pci::PCI::scan_pci_bus();
         storage::init();
+        fs::vfs::init();
 
-        test_fs();
+        // test_fs();
         // test_proc();
+
+        test_elf_execution();
     }
 
     loop {}
+}
+
+pub fn test_elf_execution() {
+    let process = Process::create_user_process(Priority::Medium, "/demo_app");
+    let thread = process.borrow().threads[0].borrow().clone();
+    thread.run();
 }
 
 pub fn print_buffer_text(buffer: *mut u8, length: usize) {
@@ -116,8 +129,6 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 pub unsafe fn test_proc() {
-    tasks::move_stack(KERNEL_STACK_START as *mut u8, KERNEL_STACK_SIZE as u64);
-
     let proc1 = Process::create_kernel_process(test_thread1, Priority::Medium);
     println!("Process 1 created");
     let proc2 = Process::create_kernel_process(test_thread2, Priority::Medium);
@@ -172,11 +183,9 @@ extern "C" fn test_thread2() {
 }
 
 fn test_fs() {
-    let mut vfs = fs::vfs::VirtualFileSystem::new();
-    vfs.mount("AHCI0", "/", "FAT32");
-
     println!("Listing directory /");
 
+    let vfs = unsafe { FS.lock() };
     let list_directory = vfs.read_dir("/");
     if let Some(entries) = list_directory {
         for entry in entries {

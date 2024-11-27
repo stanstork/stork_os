@@ -75,9 +75,9 @@ impl Process {
     /// # Returns
     ///
     /// A reference-counted pointer to the new process.
-    pub fn create_user_process(priority: Priority) -> Rc<RefCell<Process>> {
+    pub fn create_user_process(priority: Priority, elf_file: &str) -> Rc<RefCell<Process>> {
         let process = Rc::new(RefCell::new(Process::new()));
-        let thread = Thread::new_user(process.clone(), priority);
+        let thread = Thread::new_user(process.clone(), priority, elf_file);
 
         process
             .borrow_mut()

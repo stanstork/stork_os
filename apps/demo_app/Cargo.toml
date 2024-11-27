@@ -1,0 +1,15 @@
+[package]
+name = "demo_app"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+
+[build]
+target = "x86_64-unknown-none"
+
+[features]
+default = []

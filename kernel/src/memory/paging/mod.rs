@@ -4,7 +4,7 @@ use crate::{
         addr::{PhysAddr, VirtAddr},
         get_memory_size,
         paging::{manager::PageTableManager, table::PageTable},
-        PAGE_SIZE,
+        KERNEL_VIRT_START, PAGE_SIZE,
     },
     println,
     registers::cr3::Cr3,
@@ -45,15 +45,34 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
     let total_memory = get_memory_size(boot_info);
 
     let mut frame_alloc = || page_frame_alloc.alloc_page().unwrap().0 as *mut PageTable;
-    for i in (0..total_memory).step_by(PAGE_SIZE) {
-        unsafe { pt_manager.map_memory(VirtAddr(i), PhysAddr(i), &mut frame_alloc, false) };
-    }
+
+    // Identity mapping ensures the kernel can access physical memory directly during early initialization.
+    // This is crucial before transitioning to higher-half memory, as the kernel may still access
+    // physical addresses directly (e.g., for device initialization or debugging).
+    map_kernel(
+        VirtAddr(0),
+        PhysAddr(0),
+        total_memory,
+        &mut pt_manager,
+        &mut frame_alloc,
+    );
 
     // Remap the framebuffer memory.
     remap_frame_buffer(boot_info, &mut pt_manager, &mut frame_alloc);
 
     // Update the CR3 register to use the new page table.
     Cr3::write(pml4 as u64);
+
+    // Mapping the kernel to the higher half separates kernel space from user space.
+    // This provides better isolation, security, and compatibility with modern operating systems.
+    // After the transition, all kernel code and data will be accessed using higher-half virtual addresses.
+    map_kernel(
+        KERNEL_VIRT_START,
+        PhysAddr(0),
+        boot_info.kernel_end as usize,
+        &mut pt_manager,
+        &mut frame_alloc,
+    );
 
     // Store the page table manager in a global static variable.
     unsafe {
@@ -62,6 +81,19 @@ pub unsafe fn init(boot_info: &'static BootInfo, page_frame_alloc: &mut Physical
     }
 
     println!("Page table initialized");
+}
+
+// Maps the kernel memory to the specified physical address range.
+unsafe fn map_kernel<F: FnMut() -> *mut PageTable>(
+    virt_addr_start: VirtAddr,
+    phys_addr_start: PhysAddr,
+    size: usize,
+    pt_manager: &mut PageTableManager,
+    frame_alloc: &mut F,
+) {
+    for i in (0..size).step_by(PAGE_SIZE) {
+        pt_manager.map_memory(virt_addr_start + i, phys_addr_start + i, frame_alloc, false);
+    }
 }
 
 // Remaps the framebuffer memory to ensure it is accessible.

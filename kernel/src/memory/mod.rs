@@ -15,6 +15,7 @@ pub(crate) mod paging;
 
 pub const PAGE_SIZE: usize = 4096; // 4 KB
 pub const KERNEL_PHYS_START: PhysAddr = PhysAddr(0x100000); // 1 MB
+pub const KERNEL_VIRT_START: VirtAddr = VirtAddr(0xffffffff80000000);
 pub const HEAP_START: VirtAddr = VirtAddr(0x0000100000000000); // 1 TB
 pub const HEAP_PAGES: usize = 1024 * 16; // 64 MB
 

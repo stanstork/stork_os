@@ -1,5 +1,3 @@
-use core::{arch::asm, fmt::Debug};
-
 use crate::{
     devices::input::keyboard::init_keyboard,
     interrupts::{handlers::timer::init_timer, idt::InterruptDescriptorTable},
@@ -8,7 +6,9 @@ use crate::{
         PIC_DATA_MASTER, PIC_DATA_SLAVE,
     },
     println,
+    sys::syscalls::handle_system_call,
 };
+use core::{arch::asm, fmt::Debug};
 
 // Constants for kernel code segment and IDT entry count.
 pub const KERNEL_CS: u16 = 0x08;
@@ -21,14 +21,14 @@ pub const TIMER_IRQ: usize = 0;
 /// The InterruptStackFrame struct represents the stack frame that is pushed to the stack when an interrupt occurs.
 #[repr(C, packed)]
 pub struct InterruptStackFrame {
-    value: InterruptStackFrameValue,
+    pub(crate) value: InterruptStackFrameValue,
 }
 
 /// Structure representing the stack frame values.
 #[derive(Clone, Copy, Default)]
 #[repr(C, packed)]
 pub struct InterruptStackFrameValue {
-    instruction_pointer: u64,
+    pub(crate) instruction_pointer: u64,
     code_segment: u64,
     cpu_flags: u64,
     stack_pointer: u64,
@@ -60,8 +60,9 @@ pub fn init() {
             IDT[i].set_gate(default_handler as u64, 0x8E, KERNEL_CS);
         }
 
+        // Set the system call handler
         IDT[0x80].set_gate(
-            syscall_handler as u64,
+            handle_system_call as u64,
             0xEE, // Present, DPL=3, Type=0xE (32-bit interrupt gate)
             0x08, // Kernel code segment selector
         );
@@ -176,11 +177,6 @@ pub extern "x86-interrupt" fn default_handler(stack_frame: InterruptStackFrame) 
 
 pub extern "x86-interrupt" fn divide_by_zero_handler(stack_frame: InterruptStackFrame) {
     println!("Interrupt: Divide by zero");
-}
-
-pub extern "x86-interrupt" fn syscall_handler() {
-    println!("Interrupt: Syscall");
-    // Syscall handler code here
 }
 
 impl Debug for InterruptStackFrame {
