@@ -129,13 +129,13 @@ impl ElfLoader {
         let size = vfs.size(elf_file).expect("Failed to get file size");
 
         // Allocate a buffer to store the ELF file contents
-        let buffer_ptr = memory::allocate_buffer(size);
-        vfs.read_file(elf_file, buffer_ptr.as_mut_ptr());
+        let buffer_ptr = memory::allocate_dma_buffer(size);
+        vfs.read_file(elf_file, buffer_ptr as *mut u8);
 
         println!("Loading ELF file: {} (size: {} bytes)", elf_file, size);
 
         // Parse the ELF header
-        let elf_header = unsafe { &*(buffer_ptr.as_mut_ptr() as *const Elf64Ehdr) };
+        let elf_header = unsafe { &*(buffer_ptr as *const Elf64Ehdr) };
 
         // Verify the ELF header
         if !Self::validate_elf_header(elf_header) {
@@ -149,7 +149,7 @@ impl ElfLoader {
         for i in 0..elf_header.e_phnum as usize {
             // Access the program header at the current index
             let phdr = unsafe {
-                &*((buffer_ptr.0
+                &*((buffer_ptr as usize
                     + elf_header.e_phoff as usize
                     + i * elf_header.e_phentsize as usize) as *const Elf64Phdr)
             };
@@ -183,7 +183,7 @@ impl ElfLoader {
 
                         unsafe {
                             core::ptr::copy_nonoverlapping(
-                                (buffer_ptr.0 + offset) as *const u8,
+                                (buffer_ptr as usize + offset) as *const u8,
                                 phys_addr.as_mut_ptr(),
                                 size,
                             );

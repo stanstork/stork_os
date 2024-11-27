@@ -1,5 +1,3 @@
-use core::pin;
-
 use self::{
     addr::{PhysAddr, VirtAddr},
     memory_descriptor::EFIMemoryDescriptor,
@@ -22,7 +20,6 @@ pub const HEAP_START: VirtAddr = VirtAddr(0x0000100000000000); // 1 TB
 pub const HEAP_PAGES: usize = 1024 * 16; // 64 MB
 
 pub static mut PAGE_FRAME_ALLOCATOR: Option<PhysicalPageAllocator> = None;
-pub static mut CODE_ADDR: VirtAddr = VirtAddr(0); // Start of code section
 
 /// Initializes the system's memory management unit, setting up the allocator and paging.
 ///
@@ -67,9 +64,6 @@ pub unsafe fn init(boot_info: &'static crate::boot::BootInfo) {
 
     // Store the physical page frame allocator in a global static variable for future use.
     PAGE_FRAME_ALLOCATOR = Some(page_frame_allocator);
-
-    CODE_ADDR = HEAP_START + (HEAP_PAGES * PAGE_SIZE);
-    println!("Code address: {:#x}", CODE_ADDR.0);
 
     // Optionally test heap allocation and modification to verify the allocator's functionality.
     test_heap_allocation();
@@ -177,23 +171,6 @@ pub fn map_io_pages(pages: usize) -> usize {
 pub fn allocate_dma_buffer(size: usize) -> u64 {
     let pages = (size / PAGE_SIZE) + 1;
     map_io_pages(pages) as u64
-}
-
-pub fn allocate_buffer(size: usize) -> VirtAddr {
-    let pages = (size / PAGE_SIZE) + 1;
-    let root_page_table = active_level_4_table();
-    let page_table_manager = PageTableManager::new(root_page_table);
-
-    let mut virt_addr = None;
-
-    for _ in 0..pages {
-        let addr = unsafe { page_table_manager.alloc_page() };
-        if virt_addr.is_none() {
-            virt_addr = Some(addr);
-        }
-        PageTableManager::ser_user_access(root_page_table, addr);
-    }
-    virt_addr.unwrap()
 }
 
 pub fn deallocate_dma_buffer(phys_addr: u64, size: usize) {

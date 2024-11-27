@@ -41,8 +41,6 @@ emu: ${DISK_IMG}
 
 kernel: ${KERNEL_BINARY}
 
-simple_app: ${SIMPLE_APP_BINARY}
-
 ${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${DEMO_APP_BINARY}
 	# Create UEFI boot disk image in DOS format.
 	dd if=/dev/zero of=${DISK_IMG} bs=1M count=512
