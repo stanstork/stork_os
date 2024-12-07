@@ -3,12 +3,5 @@
 version = 3
 
 [[package]]
-name = "demo_app"
-version = "0.1.0"
-dependencies = [
- "std",
-]
-
-[[package]]
 name = "std"
 version = "0.1.0"

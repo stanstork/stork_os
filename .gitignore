@@ -5,3 +5,4 @@ build/*
 !build/.gitkeep
 
 apps/*/target
+stdlib/target

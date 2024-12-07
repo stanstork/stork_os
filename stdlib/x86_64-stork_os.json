@@ -1,0 +1,21 @@
+{
+    "llvm-target": "x86_64-unknown-stork_os",
+    "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+    "arch": "x86_64",
+    "os": "stork_os",
+    "vendor": "unknown",
+    "target-family": "unix",
+    "disable-redzone": true,
+    "panic-strategy": "abort",
+    "linker-flavor": "ld.lld",
+    "pre-link-args": {
+        "ld.lld": [
+            "--script=linker.ld"
+        ]
+    },
+    "post-link-args": {
+        "ld.lld": []
+    },
+    "target-c-int-width": "32",
+    "target-pointer-width": "64"
+}

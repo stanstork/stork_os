@@ -96,6 +96,7 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 }
 
 pub fn test_elf_execution() {
+    println!("Executing demo_app");
     let process = Process::create_user_process(Priority::Medium, "/demo_app");
     let thread = process.borrow().threads[0].borrow().clone();
     thread.run();

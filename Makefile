@@ -1,6 +1,7 @@
 BUILD_DIR         := build
 KERNEL_DIR        := kernel
 BOOTLOADER_DIR	  := boot/uefi
+STD_LIB_DIR       := stdlib
 
 KERNEL_BINARY     := ${BUILD_DIR}/kernel.elf
 BOOTLOADER_BINARY := ${BUILD_DIR}/bootx64.efi
@@ -41,7 +42,7 @@ emu: ${DISK_IMG}
 
 kernel: ${KERNEL_BINARY}
 
-${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${DEMO_APP_BINARY}
+${DISK_IMG}: ${BUILD_DIR} ${KERNEL_BINARY} ${BOOTLOADER_BINARY} ${STD_LIB_DIR} ${DEMO_APP_BINARY}
 	# Create UEFI boot disk image in DOS format.
 	dd if=/dev/zero of=${DISK_IMG} bs=1M count=512
 	mformat -i ${DISK_IMG} -F ::
@@ -62,6 +63,9 @@ ${BUILD_DIR}:
 
 ${KERNEL_BINARY}:
 	make -C ${KERNEL_DIR}
+
+${STD_LIB_DIR}:
+	make -C ${STD_LIB_DIR}
 
 ${DEMO_APP_BINARY}:
 	make -C apps/demo_app
